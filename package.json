@@ -1,0 +1,19 @@
+{
+  "name": "anote",
+  "version": "0.2.0",
+  "description": "Linked, provenance-stamped markdown notes for an agent",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "bin": { "anote": "./anote" },
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
