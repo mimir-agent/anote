@@ -43,9 +43,27 @@ TYPE_ALIASES = {
 }
 SOURCES = ("told", "observed", "inferred")
 DEFAULT_REVIEW = {"observed": "+60d", "inferred": "+30d", "told": "+180d"}
-SETTABLE = ("title", "source", "version", "review", "tags")
-META_ORDER = ["title", "created", "updated", "source", "version", "review",
-              "confirmed", "status", "tags", "supersedes", "superseded_by"]
+STANCES = ("held", "unheld")
+SETTABLE = ("title", "type", "source", "stance", "version", "review", "tags")
+META_ORDER = ["title", "type", "created", "updated", "source", "stance",
+              "version", "review", "confirmed", "status", "tags",
+              "supersedes", "superseded_by"]
+NOTE_TYPES = {
+    "reference": "a record of a piece of material: something read, watched or listened to",
+    "hub": "a hand-kept collection of links to notes that share no other connection",
+    "artifact": "writing you composed; add a form (post, message, ...) once the form is clear",
+    "assertion": "a claim that can be challenged, as one idea; not anyone's position unless stance says so",
+    "concept": "an abstraction other notes refer to by name, with no claim attached",
+    "cycle": "one work cycle; what goes in it is defined elsewhere",
+    "fragment": "a piece lifted from a reference that is worth its own note; links back to it",
+    "person": "a person likely to be referenced more than a few times",
+    "project": "tasks directed at a goal with a defined output",
+    "protocol": "instructions written in advance for a scenario",
+    "question": "something still unanswered; assertions answer it",
+}
+MEDIA = {"audio", "text", "video"}
+FORMS = {"article": "text", "book": "text", "film": "video"}
+LOG_LINE = re.compile(r"^- (\d{2}:\d{2}) \[(told|observed|inferred)\] (.*)$")
 
 FRONTMATTER = re.compile(r"\A---\n(.*?)\n---[ \t]*\n?(.*)\Z", re.S)
 LINK_LINE = re.compile(
@@ -87,6 +105,45 @@ def norm_type(t):
     if t not in LINK_TYPES:
         die(2, "unknown link type '%s'. Types: %s" % (t, ", ".join(LINK_TYPES)))
     return t
+
+
+def check_type(raw):
+    """Validate a type line and return it normalised, e.g. 'reference text article'."""
+    w = [x.lstrip("#").lower() for x in re.split(r"[\s,]+", raw.strip()) if x.lstrip("#")]
+    if not w:
+        die(2, "type is empty. Types: %s" % ", ".join(NOTE_TYPES))
+    head, rest = w[0], w[1:]
+    if head not in NOTE_TYPES:
+        die(2, "unknown note type '%s'. Types: %s" % (head, ", ".join(NOTE_TYPES)))
+    if head == "reference":
+        if rest and rest[0] not in MEDIA:
+            if rest[0] in FORMS:
+                die(2, "form '%s' goes after its media tag: reference %s %s" % (rest[0], FORMS[rest[0]], rest[0]))
+            die(2, "reference media must be one of: %s" % ", ".join(sorted(MEDIA)))
+        if len(rest) > 2:
+            die(2, "a reference carries at most three tags: reference, media, form")
+        if len(rest) == 2:
+            if rest[1] not in FORMS:
+                die(2, "unknown reference form '%s'. Forms: %s" % (rest[1], ", ".join(FORMS)))
+            if FORMS[rest[1]] != rest[0]:
+                die(2, "form '%s' goes with media '%s', not '%s'" % (rest[1], FORMS[rest[1]], rest[0]))
+    elif head == "artifact":
+        if len(rest) > 1:
+            die(2, "an artifact carries at most one form tag")
+        if rest and (not re.fullmatch(r"[a-z][a-z0-9-]*", rest[0]) or rest[0] in NOTE_TYPES):
+            die(2, "'%s' is not a usable artifact form (try post, message or outline)" % rest[0])
+    elif rest:
+        die(2, "a %s note carries a single type tag, got extra: %s" % (head, " ".join(rest)))
+    return " ".join(w)
+
+
+def ntype(n):
+    w = n.meta.get("type", "").split()
+    return w[0].lstrip("#") if w else ""
+
+
+def hashtags(raw):
+    return " ".join("#" + x.lstrip("#") for x in raw.split())
 
 
 def when(value, base=None):
@@ -273,21 +330,41 @@ def cmd_init(a):
 
 
 def cmd_types(a):
-    emit(a, LINK_TYPES, "\n".join("%-20s %s" % (k, v) for k, v in LINK_TYPES.items()))
+    rows = ["note types (one per note, --type):"]
+    rows += ["  %-10s %s" % (k, v) for k, v in NOTE_TYPES.items()]
+    rows += ["", "a reference adds media (%s), then a form (%s)" % (
+        ", ".join(sorted(MEDIA)), ", ".join("%s=%s" % (f, m) for f, m in FORMS.items())),
+        "", "link types:"]
+    rows += ["  %-20s %s" % (k, v) for k, v in LINK_TYPES.items()]
+    emit(a, {"note_types": NOTE_TYPES, "link_types": LINK_TYPES}, "\n".join(rows))
 
 
-def cmd_add(a):
-    g = graph_dir(a)
-    notes = load_all(g)
-    title = clean(a.title)
+def type_from_args(a):
+    words = [a.type]
+    if a.media:
+        words.append(a.media)
+    if a.form:
+        words.append(a.form)
+    return check_type(" ".join(words))
+
+
+def create_note(g, notes, a, title, body, source):
+    title = clean(title)
     if not title:
         die(2, "title is empty")
+    type_line = type_from_args(a)
+    head = type_line.split()[0]
+    if head == "person" and not a.person_ok:
+        die(2, "person notes need --person-ok. Only for someone likely to be referenced "
+               "more than a few times, and only with facts they would be fine with being "
+               "recorded. Otherwise write the name as plain text in the log.")
+    if a.stance and head != "assertion":
+        die(2, "--stance only applies to assertions")
     slug = slugify(a.slug) if a.slug else slugify(title)
     if not slug:
         die(2, "could not make a slug from the title; pass --slug")
     if slug in notes:
         die(2, "'%s' already exists. Use `anote append %s ...` or pass --slug." % (slug, slug))
-    body = sys.stdin.read() if a.body == "-" else (a.body or "")
     links = []
     for spec in a.link or []:
         t, sep, target = spec.partition(":")
@@ -297,10 +374,12 @@ def cmd_add(a):
     if a.review is not None:
         review = when(a.review)
     else:
-        review = when(DEFAULT_REVIEW[a.source])
+        review = when(DEFAULT_REVIEW[source])
     d = today().isoformat()
-    meta = {"title": title, "created": d, "updated": d,
-            "source": a.source, "status": "active"}
+    meta = {"title": title, "type": type_line, "created": d, "updated": d,
+            "source": source, "status": "active"}
+    if a.stance:
+        meta["stance"] = a.stance
     if a.version:
         meta["version"] = clean(a.version)
     if review:
@@ -309,20 +388,54 @@ def cmd_add(a):
     if tags:
         meta["tags"] = ", ".join(tags)
     save(g, Note(slug, meta, body.strip("\n"), links))
+    return slug
+
+
+def cmd_add(a):
+    g = graph_dir(a)
+    notes = load_all(g)
+    body = sys.stdin.read() if a.body == "-" else (a.body or "")
+    slug = create_note(g, notes, a, a.title, body, a.source)
     print("created %s" % slug)
+
+
+def append_log(g, text, source):
+    day = today().isoformat()
+    p = g / "daily" / (day + ".md")
+    existing = p.read_text(encoding="utf-8") if p.exists() else "# %s\n\n" % day
+    if not existing.endswith("\n"):
+        existing += "\n"
+    write_text(p, existing + "- %s [%s] %s\n" % (dt.datetime.now().strftime("%H:%M"), source, text))
+    return day
+
+
+def cmd_promote(a):
+    g = graph_dir(a)
+    if not DATE_RE.fullmatch(a.date):
+        die(2, "date must be YYYY-MM-DD")
+    p = g / "daily" / (a.date + ".md")
+    if not p.exists():
+        die(3, "no daily note for %s" % a.date)
+    bullets = [l for l in p.read_text(encoding="utf-8").splitlines() if l.startswith("- ")]
+    if not 1 <= a.line <= len(bullets):
+        die(3, "line %d is out of range (1 to %d)" % (a.line, len(bullets)))
+    raw = bullets[a.line - 1]
+    m = LOG_LINE.match(raw)
+    text = m.group(3) if m else raw[2:]
+    source = a.source or (m.group(2) if m else None)
+    if not source:
+        die(2, "that line has no source tag; pass --source")
+    slug = create_note(g, load_all(g), a, a.title, text, source)
+    append_log(g, "promoted line %d of %s to [[%s]]" % (a.line, a.date, slug), "observed")
+    print("promoted to %s" % slug)
 
 
 def cmd_log(a):
     g = graph_dir(a)
-    day = today().isoformat()
-    p = g / "daily" / (day + ".md")
     text = clean(" ".join(a.text))
     if not text:
         die(2, "nothing to log")
-    existing = p.read_text(encoding="utf-8") if p.exists() else "# %s\n\n" % day
-    if not existing.endswith("\n"):
-        existing += "\n"
-    write_text(p, existing + "- %s [%s] %s\n" % (dt.datetime.now().strftime("%H:%M"), a.source, text))
+    day = append_log(g, text, a.source)
     print("logged to daily/%s" % day)
 
 
@@ -367,7 +480,13 @@ def cmd_show(a):
         if not p.exists():
             die(3, "no daily note for %s" % ref)
         text = p.read_text(encoding="utf-8")
-        emit(a, {"daily": ref, "content": text}, text.rstrip("\n"))
+        count, view = 0, []
+        for line in text.rstrip("\n").splitlines():
+            if line.startswith("- "):
+                count += 1
+                line = "[%d] %s" % (count, line)
+            view.append(line)
+        emit(a, {"daily": ref, "content": text}, "\n".join(view))
         return
     notes = load_all(g)
     s = resolve(notes, ref)
@@ -383,6 +502,10 @@ def cmd_show(a):
         emit(a, data, "")
         return
     lines = ["# %s  [%s]" % (n.title, s)]
+    if n.meta.get("type"):
+        lines.append("type: " + hashtags(n.meta["type"]))
+    if ntype(n) == "assertion":
+        lines.append("stance: " + (n.meta.get("stance") or "not stated (not anyone's position)"))
     bits = ["source: " + n.meta.get("source", "?")]
     for k in ("version", "created", "updated", "confirmed"):
         if n.meta.get(k):
@@ -445,13 +568,13 @@ def cmd_search(a):
     toks = [t.lower() for t in a.query if t.strip()]
     docs = []
     for s, n in notes.items():
-        if n.status == "active" or a.all:
+        if (n.status == "active" or a.all) and (not a.type or ntype(n) == a.type):
             docs.append({"slug": s, "title": n.title, "body": n.body, "tags": n.tags,
-                         "kind": "note", "source": n.meta.get("source", ""),
+                         "kind": "note", "type": ntype(n), "source": n.meta.get("source", ""),
                          "updated": n.meta.get("updated", ""), "status": n.status,
                          "review": n.meta.get("review", "")})
     dd = g / "daily"
-    if dd.is_dir():
+    if dd.is_dir() and not a.type:
         for p in sorted(dd.glob("*.md")):
             docs.append({"slug": "daily/" + p.stem, "title": p.stem, "tags": [],
                          "body": p.read_text(encoding="utf-8"), "kind": "daily",
@@ -491,14 +614,17 @@ def cmd_list(a):
             continue
         if a.tag and slugify(a.tag) not in n.tags:
             continue
-        rows.append({"slug": s, "title": n.title, "source": n.meta.get("source", ""),
+        if a.type and ntype(n) != a.type:
+            continue
+        rows.append({"slug": s, "title": n.title, "type": ntype(n), "source": n.meta.get("source", ""),
                      "updated": n.meta.get("updated", ""), "status": n.status,
                      "out": len(n.links), "in": len(inc.get(s, []))})
     rows.sort(key=lambda r: (r["updated"], r["slug"]), reverse=True)
     if a.limit:
         rows = rows[:a.limit]
     emit(a, rows, "\n".join(
-        "%-44s %s  %-9s o:%d i:%d  %s" % (r["slug"], r["updated"], r["source"], r["out"], r["in"], r["title"])
+        "%-44s %s  %-9s %-10s o:%d i:%d  %s" % (
+            r["slug"], r["updated"], r["source"], r["type"] or "-", r["out"], r["in"], r["title"])
         for r in rows) or "no notes")
 
 
@@ -585,7 +711,23 @@ def cmd_set(a):
     k, v = a.key, a.value
     if k not in SETTABLE:
         die(2, "can set: %s" % ", ".join(SETTABLE))
-    if k == "source":
+    if k == "type":
+        new_type = check_type(v)
+        if new_type.split()[0] == "person":
+            die(2, "person notes are created with `add --type person --person-ok`")
+        n.meta[k] = new_type
+        if n.meta.get("stance") and new_type.split()[0] != "assertion":
+            n.meta.pop("stance")
+    elif k == "stance":
+        if ntype(n) != "assertion":
+            die(2, "stance only applies to assertions")
+        if v == "none":
+            n.meta.pop(k, None)
+        elif v in STANCES:
+            n.meta[k] = v
+        else:
+            die(2, "stance must be one of: %s, or none" % ", ".join(STANCES))
+    elif k == "source":
         if v not in SOURCES:
             die(2, "source must be one of: %s" % ", ".join(SOURCES))
         n.meta[k] = v
@@ -650,6 +792,25 @@ def cmd_check(a):
     for s, n in notes.items():
         if n.meta.get("source") not in SOURCES:
             add("error", s, "source is missing or not one of %s" % "/".join(SOURCES))
+        head = ntype(n)
+        if not n.meta.get("type"):
+            add("warn", s, "no type")
+        else:
+            try:
+                check_type(n.meta["type"])
+            except Fail as e:
+                add("error", s, e.msg)
+        if n.meta.get("stance") and (n.meta["stance"] not in STANCES or head != "assertion"):
+            add("error", s, "stance is only for assertions and must be held or unheld")
+        if head == "fragment" and not any(
+                l["to"] in notes and ntype(notes[l["to"]]) == "reference" for l in n.links):
+            add("error", s, "a fragment must link back to the reference it came from")
+        if head == "artifact" and not n.links:
+            add("warn", s, "an artifact should link to what it draws on")
+        if head == "hub" and len(n.links) < 2:
+            add("warn", s, "a hub should link to at least two notes")
+        if head == "assertion" and n.title.strip().endswith("?"):
+            add("warn", s, "title reads as a question; is this a question note?")
         for k in ("created", "updated", "review", "confirmed"):
             v = n.meta.get(k)
             if v:
@@ -686,6 +847,17 @@ def cmd_check(a):
 
 # ----------------------------------------------------------------- parser
 
+def note_args(sp):
+    sp.add_argument("--type", required=True, choices=sorted(NOTE_TYPES),
+                    help="what kind of note this is; run `anote types` for the definitions")
+    sp.add_argument("--media", choices=sorted(MEDIA), help="references only: audio, text or video")
+    sp.add_argument("--form", help="reference form (article, book, film) or artifact form (post, message, ...)")
+    sp.add_argument("--stance", choices=STANCES,
+                    help="assertions only: held = I stand behind it; unheld = recorded, not my position")
+    sp.add_argument("--person-ok", action="store_true",
+                    help="required for person notes; see `anote add --help`")
+
+
 def build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--graph", help="graph directory (default $ANOTE_GRAPH or ~/.hermes/graph)")
@@ -701,8 +873,10 @@ def build_parser():
     cmd("init", cmd_init, "create the graph directories")
     cmd("types", cmd_types, "list link types and what they mean")
 
-    sp = cmd("add", cmd_add, "create a note (provenance is required)")
+    sp = cmd("add", cmd_add, "create a typed note (type and source are required). "
+                             "New content belongs in the daily log unless it meets a type's definition.")
     sp.add_argument("title")
+    note_args(sp)
     sp.add_argument("--source", required=True, choices=SOURCES,
                     help="told = a person said it; observed = I saw it happen; inferred = I concluded it")
     sp.add_argument("--body", help="note text, or - to read stdin")
@@ -712,9 +886,21 @@ def build_parser():
     sp.add_argument("--link", action="append", help="TYPE:NOTE, repeatable")
     sp.add_argument("--slug", help="override the filename slug")
 
-    sp = cmd("log", cmd_log, "append a line to today's daily log")
+    sp = cmd("log", cmd_log, "append a line to today's daily log, the default place for anything new")
     sp.add_argument("text", nargs="+")
     sp.add_argument("--source", choices=SOURCES, default="observed")
+
+    sp = cmd("promote", cmd_promote, "turn a daily log line into a typed note")
+    sp.add_argument("date", help="YYYY-MM-DD")
+    sp.add_argument("line", type=int, help="bullet number as shown by `anote show DATE`")
+    sp.add_argument("title")
+    note_args(sp)
+    sp.add_argument("--source", choices=SOURCES, help="default: the source tag on the log line")
+    sp.add_argument("--version")
+    sp.add_argument("--review")
+    sp.add_argument("--tag", action="append")
+    sp.add_argument("--link", action="append")
+    sp.add_argument("--slug")
 
     sp = cmd("link", cmd_link, "link one note to another with a typed link")
     sp.add_argument("src")
@@ -735,9 +921,11 @@ def build_parser():
     sp.add_argument("--limit", type=int, default=10)
     sp.add_argument("--budget", type=int, default=0, help="stop after roughly this many tokens of output")
     sp.add_argument("--all", action="store_true", help="include superseded notes")
+    sp.add_argument("--type", help="only notes of this type (daily logs are skipped)")
 
     sp = cmd("list", cmd_list, "list notes, newest first")
     sp.add_argument("--tag")
+    sp.add_argument("--type", help="only notes of this type")
     sp.add_argument("--status", choices=("active", "superseded", "all"), default="active")
     sp.add_argument("--limit", type=int, default=0)
 

@@ -5,13 +5,14 @@ Linked, provenance-stamped markdown notes for an agent, run from a single CLI.
 Most note tools assume a person who remembers the context around a note. An agent
 that persists across sessions does not. A stale note it trusts turns into a
 confident wrong answer. anote is built around that problem: every note records
-who said it, what it was true for, and when to look at it again, and notes
-connect to each other with typed links.
+what kind of note it is, who said it, what it was true for, and when to look at it
+again, and notes connect to each other with typed links.
 
 - One Python file, standard library only, Python 3.9 or newer.
 - Notes are plain markdown files. There is no database, so the files are the
   source of truth and anything else can be rebuilt from them.
 - Output is short and has a `--json` mode, so an agent can read it cheaply.
+- A ready-made skill for agents lives in [`skills/anote`](skills/anote/SKILL.md).
 
 ## Install
 
@@ -27,22 +28,72 @@ The graph lives in `~/.hermes/graph` by default. Set `ANOTE_GRAPH` or pass
 ## Quick start
 
 ```sh
-anote add "Cron jobs fall back to email" \
-  --source observed --version "hermes 0.19.0" --tag cron \
-  --body "deliver=origin with no origin sends to the email home channel."
+# New things go in the daily log first.
+anote log "a job with deliver=origin and no origin went to email" --source observed
+anote show "$(date +%F)"            # log lines are numbered
 
-anote add "Always set deliver explicitly" --source inferred \
+# Promote a line once it meets a type's definition.
+anote promote "$(date +%F)" 1 "Cron jobs fall back to email" \
+  --type assertion --stance held --version "hermes 0.19.0"
+
+# Or write a typed note directly, and link it.
+anote add "Always set deliver explicitly" --source inferred --type assertion \
   --link explains:cron-jobs-fall-back-to-email
 
-anote show cron-jobs-fall-back
 anote search email --budget 200
 anote neighbors cron-jobs-fall-back-to-email --depth 2
 anote stale --within 14d
 ```
 
+## Log first
+
+New content goes in the daily log. A typed note is made only when the content
+meets one of the type definitions below. If nothing fits, the content stays in
+the log and the agent asks the person it works for, instead of forcing it into
+the closest type. `anote promote` turns a numbered log line into a note later
+and leaves a trail in the log.
+
+## Note types
+
+A note has exactly one type. The set is fixed, and `anote types` prints it.
+
+| type | what it is |
+|---|---|
+| reference | a record of material read, watched or heard; only worth a note if other notes will mention it |
+| fragment | a piece of a reference that is worth its own note; links back to that reference |
+| assertion | one claim that can be challenged; it may come from a reference |
+| question | something still unanswered; assertions answer it |
+| concept | an abstraction other notes refer to by name, with no claim attached |
+| artifact | writing you composed; a form such as `post` or `message` is added only once it is clear |
+| hub | a hand-kept list of links between notes that share no other connection |
+| protocol | instructions written in advance for a scenario |
+| project | tasks directed at a goal with a defined output |
+| cycle | one work cycle |
+| person | someone likely to be referenced more than a few times |
+
+A reference carries up to three tags, general to specific: `reference`, a media
+tag (`audio`, `text`, `video`), then a form (`article` or `book` for text, `film`
+for video). Pass them as `--type reference --media text --form article`. A form
+only goes with its own media tag.
+
+`check` enforces the structural rules: a fragment must link back to a
+reference, reference tags must be in order, and stance belongs only on
+assertions.
+
+### Stance
+
+An assertion is not anyone's position unless it says so. `--stance held` means
+the writer stands behind it, and `--stance unheld` means it is recorded and not
+endorsed. An assertion with no stance shows as "not anyone's position".
+
+### People
+
+Person notes need `--person-ok`, and are meant for someone likely to be
+referenced often. Anyone else is written as plain text in the log.
+
 ## Provenance
 
-`add` refuses to run without `--source`:
+`add` and `promote` refuse to run without a source:
 
 | source | meaning | default review |
 |---|---|---|
@@ -77,25 +128,27 @@ A link has a type that says how one note relates to another:
 The set is fixed on purpose. An unknown type is rejected. Short forms such as
 `background`, `leads` and `refs` are accepted. `anote show` prints a note with
 its links out and in, and `anote neighbors` walks the web to a chosen depth,
-optionally following one type.
+optionally following one type. Assertions link to the question they answer with
+`addresses`, and competing assertions link to each other with `opposes`.
 
 ## Commands
 
 | command | what it does |
 |---|---|
 | `init` | create the graph directories |
-| `types` | list link types |
-| `add TITLE` | create a note (`--source` required) |
+| `types` | list note types and link types |
 | `log TEXT` | append a line to today's daily log |
+| `promote DATE N TITLE` | turn a numbered log line into a typed note |
+| `add TITLE` | create a typed note (`--type` and `--source` required) |
 | `link SRC TYPE DST` | add a typed link, with optional `--note` |
 | `unlink SRC DST` | remove links between two notes |
-| `show NOTE` | print a note with links in and out, or a daily note by date |
-| `search WORDS` | ranked keyword search, with `--limit` and `--budget` |
-| `list` | list notes, newest first |
+| `show NOTE` | print a note with links in and out, or a daily log by date |
+| `search WORDS` | ranked keyword search, with `--limit`, `--budget` and `--type` |
+| `list` | list notes, newest first, with `--type` and `--tag` filters |
 | `neighbors NOTE` | walk the link web |
 | `stale` | notes whose review date has arrived |
 | `confirm NOTE` | mark a note re-checked |
-| `set NOTE KEY VALUE` | change title, source, version, review or tags |
+| `set NOTE KEY VALUE` | change title, type, source, stance, version, review or tags |
 | `append NOTE TEXT` | add text to the end of a note |
 | `supersede OLD NEW` | retire a note in favor of a newer one |
 | `check` | lint the graph |
@@ -111,9 +164,11 @@ found or ambiguous. Data goes to stdout and errors go to stderr.
 ```
 ---
 title: Cron jobs fall back to email
+type: assertion
 created: 2026-10-09
 updated: 2026-10-09
 source: observed
+stance: held
 version: hermes 0.19.0
 review: 2026-12-08
 status: active
@@ -127,6 +182,13 @@ deliver=origin with no origin sends to the email home channel.
 
 Daily logs live in `daily/YYYY-MM-DD.md`, one line per entry, each tagged with a
 time and a source.
+
+## For agents
+
+[`skills/anote/SKILL.md`](skills/anote/SKILL.md) is a plain skill file an agent
+can load: when to log, how to pick a type, how to record provenance, and what to
+do with a note whose review date has passed. Copy it into whatever skills
+directory your agent reads.
 
 ## Limits
 
