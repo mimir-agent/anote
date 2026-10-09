@@ -1,0 +1,11 @@
+#!/bin/sh
+# Launcher: run the TypeScript source with Node's built-in type stripping.
+# Resolves symlinks so it works when linked into ~/.local/bin.
+self="$0"
+while [ -h "$self" ]; do
+  dir=$(cd "$(dirname "$self")" && pwd)
+  self=$(readlink "$self")
+  case "$self" in /*) ;; *) self="$dir/$self" ;; esac
+done
+root=$(cd "$(dirname "$self")" && pwd)
+exec node --disable-warning=ExperimentalWarning "$root/src/main.ts" "$@"

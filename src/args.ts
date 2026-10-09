@@ -93,6 +93,7 @@ export function parseCommand(
   mainUsage: string,
   spec: Spec,
   argv: string[],
+  preExtras: string[] = [],
 ): Args {
   const usage = help.split("\n\n")[0] as string;
   const err = (msg: string): never => {
@@ -168,7 +169,7 @@ export function parseCommand(
   };
 
   const seen = new Set<string>();
-  const extras: string[] = [];
+  const extras: string[] = [...preExtras];
   let pi = 0; // next positional to fill
   let i = 0;
   while (i < toks.length) {
