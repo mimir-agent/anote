@@ -9,7 +9,7 @@
   "engines": { "node": ">=24" },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/",
+    "test": "node --disable-warning=ExperimentalWarning --test \"tests/*.test.ts\"",
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
