@@ -1,0 +1,786 @@
+#!/usr/bin/env python3
+"""anote: linked, provenance-stamped markdown notes for an agent.
+
+Notes are markdown files with a small frontmatter block. The files are the
+source of truth; there is no database. Every note records who said it
+(source), what it was true for (version), and when to look at it again
+(review). Notes connect to each other with typed links.
+
+Exit codes: 0 ok, 1 runtime error or failed check, 2 usage error,
+3 note not found or ambiguous.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import sys
+import tempfile
+from pathlib import Path
+
+LINK_TYPES = {
+    "expands-on": "adds detail to, or builds out, the target",
+    "explains": "makes the target understandable",
+    "supports": "is evidence or argument for the target",
+    "opposes": "is evidence or argument against the target",
+    "relates": "is connected to the target in a way no other type names",
+    "addresses": "responds to a question, problem or request in the target",
+    "helpful-background": "context worth reading before the target",
+    "leads-to": "the target follows from this",
+    "supplemental": "optional extra material for the target",
+    "duplicates": "says the same thing as the target",
+    "references": "cites or points at the target",
+}
+TYPE_ALIASES = {
+    "expands": "expands-on", "expand": "expands-on", "explain": "explains",
+    "support": "supports", "oppose": "opposes", "relate": "relates",
+    "related": "relates", "address": "addresses",
+    "background": "helpful-background", "leads": "leads-to",
+    "supplement": "supplemental", "duplicate": "duplicates",
+    "reference": "references", "refs": "references",
+}
+SOURCES = ("told", "observed", "inferred")
+DEFAULT_REVIEW = {"observed": "+60d", "inferred": "+30d", "told": "+180d"}
+SETTABLE = ("title", "source", "version", "review", "tags")
+META_ORDER = ["title", "created", "updated", "source", "version", "review",
+              "confirmed", "status", "tags", "supersedes", "superseded_by"]
+
+FRONTMATTER = re.compile(r"\A---\n(.*?)\n---[ \t]*\n?(.*)\Z", re.S)
+LINK_LINE = re.compile(
+    r"^\s*-\s+([a-z][a-z-]*)\s+\[\[([^\]]+)\]\](?:\s*\|\s*(.*))?$")
+WIKILINK = re.compile(r"\[\[([^\]|]+)\]\]")
+DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+class Fail(Exception):
+    def __init__(self, code, msg):
+        super().__init__(msg)
+        self.code = code
+        self.msg = msg
+
+
+def die(code, msg):
+    raise Fail(code, msg)
+
+
+# ---------------------------------------------------------------- helpers
+
+def today():
+    env = os.environ.get("ANOTE_TODAY")
+    return dt.date.fromisoformat(env) if env else dt.date.today()
+
+
+def clean(s):
+    return " ".join(s.split())
+
+
+def slugify(s):
+    s = re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
+    return s[:70].strip("-")
+
+
+def norm_type(t):
+    t = re.sub(r"[\s_]+", "-", t.strip().lower())
+    t = TYPE_ALIASES.get(t, t)
+    if t not in LINK_TYPES:
+        die(2, "unknown link type '%s'. Types: %s" % (t, ", ".join(LINK_TYPES)))
+    return t
+
+
+def when(value, base=None):
+    """'none' -> None; '+30d' / '2w' / '3m' (30-day months) or YYYY-MM-DD."""
+    if value is None:
+        return None
+    v = value.strip().lower()
+    if v in ("", "none"):
+        return None
+    m = re.fullmatch(r"\+?(\d+)([dwm])", v)
+    if m:
+        days = int(m.group(1)) * {"d": 1, "w": 7, "m": 30}[m.group(2)]
+        return ((base or today()) + dt.timedelta(days=days)).isoformat()
+    try:
+        return dt.date.fromisoformat(v).isoformat()
+    except ValueError:
+        die(2, "cannot read date '%s' (use YYYY-MM-DD, +30d, +6w, +3m or none)" % value)
+
+
+def write_text(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-", suffix=".md")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def graph_dir(a):
+    raw = a.graph or os.environ.get("ANOTE_GRAPH") or "~/.hermes/graph"
+    return Path(raw).expanduser()
+
+
+# ------------------------------------------------------------ note model
+
+class Note:
+    def __init__(self, slug, meta, body, links):
+        self.slug = slug
+        self.meta = meta
+        self.body = body
+        self.links = links
+
+    @property
+    def title(self):
+        return self.meta.get("title") or self.slug
+
+    @property
+    def tags(self):
+        return [t.strip() for t in self.meta.get("tags", "").split(",") if t.strip()]
+
+    @property
+    def status(self):
+        return self.meta.get("status", "active")
+
+
+def parse(text, slug):
+    m = FRONTMATTER.match(text)
+    if not m:
+        raise Fail(1, "%s.md: no frontmatter block" % slug)
+    meta, links, in_links = {}, [], False
+    for raw in m.group(1).split("\n"):
+        if not raw.strip():
+            continue
+        if raw.strip() == "links:":
+            in_links = True
+            continue
+        lm = LINK_LINE.match(raw)
+        if in_links and lm:
+            links.append({"type": lm.group(1), "to": lm.group(2).strip(),
+                          "note": (lm.group(3) or "").strip()})
+            continue
+        key, sep, val = raw.partition(":")
+        if not sep:
+            raise Fail(1, "%s.md: cannot read line '%s'" % (slug, raw))
+        meta[key.strip()] = val.strip()
+        in_links = False
+    return Note(slug, meta, m.group(2).strip("\n"), links)
+
+
+def dump(n):
+    lines = ["---"]
+    for k in META_ORDER:
+        if n.meta.get(k):
+            lines.append("%s: %s" % (k, n.meta[k]))
+    for k in sorted(set(n.meta) - set(META_ORDER)):
+        lines.append("%s: %s" % (k, n.meta[k]))
+    if n.links:
+        lines.append("links:")
+        for l in n.links:
+            row = "  - %s [[%s]]" % (l["type"], l["to"])
+            if l["note"]:
+                row += " | " + l["note"]
+            lines.append(row)
+    lines.append("---")
+    out = "\n".join(lines) + "\n"
+    if n.body.strip():
+        out += "\n" + n.body.strip("\n") + "\n"
+    return out
+
+
+def load_all(g, errors=None):
+    d = g / "notes"
+    notes = {}
+    if not d.is_dir():
+        return notes
+    for p in sorted(d.glob("*.md")):
+        if p.name.startswith("."):
+            continue
+        try:
+            notes[p.stem] = parse(p.read_text(encoding="utf-8"), p.stem)
+        except Fail as e:
+            if errors is None:
+                raise
+            errors.append(e.msg)
+    return notes
+
+
+def save(g, n):
+    write_text(g / "notes" / (n.slug + ".md"), dump(n))
+
+
+def resolve(notes, ref):
+    ref = ref.strip()
+    if ref in notes:
+        return ref
+    low = clean(ref).lower()
+    by_title = [s for s, n in notes.items() if clean(n.title).lower() == low]
+    if len(by_title) == 1:
+        return by_title[0]
+    slugged = slugify(ref)
+    if slugged in notes:
+        return slugged
+    prefix = [s for s in notes if slugged and s.startswith(slugged)]
+    if len(prefix) == 1:
+        return prefix[0]
+    cands = sorted(set(by_title) | set(prefix))
+    if cands:
+        die(3, "'%s' is ambiguous: %s" % (ref, ", ".join(cands[:8])))
+    die(3, "no note matches '%s'" % ref)
+
+
+def incoming(notes):
+    inc = {}
+    for s, n in notes.items():
+        for l in n.links:
+            if l["to"] in notes:
+                inc.setdefault(l["to"], []).append((s, l["type"], l["note"]))
+    return inc
+
+
+def touch(n):
+    n.meta["updated"] = today().isoformat()
+
+
+def emit(a, data, text):
+    if a.json:
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+    elif text:
+        print(text)
+
+
+def review_phrase(rev):
+    days = (dt.date.fromisoformat(rev) - today()).days
+    if days < 0:
+        return "overdue by %dd" % -days
+    if days == 0:
+        return "due today"
+    return "in %dd" % days
+
+
+# --------------------------------------------------------------- commands
+
+def cmd_init(a):
+    g = graph_dir(a)
+    (g / "notes").mkdir(parents=True, exist_ok=True)
+    (g / "daily").mkdir(parents=True, exist_ok=True)
+    print("graph ready at %s" % g)
+
+
+def cmd_types(a):
+    emit(a, LINK_TYPES, "\n".join("%-20s %s" % (k, v) for k, v in LINK_TYPES.items()))
+
+
+def cmd_add(a):
+    g = graph_dir(a)
+    notes = load_all(g)
+    title = clean(a.title)
+    if not title:
+        die(2, "title is empty")
+    slug = slugify(a.slug) if a.slug else slugify(title)
+    if not slug:
+        die(2, "could not make a slug from the title; pass --slug")
+    if slug in notes:
+        die(2, "'%s' already exists. Use `anote append %s ...` or pass --slug." % (slug, slug))
+    body = sys.stdin.read() if a.body == "-" else (a.body or "")
+    links = []
+    for spec in a.link or []:
+        t, sep, target = spec.partition(":")
+        if not sep:
+            die(2, "--link wants TYPE:NOTE, got '%s'" % spec)
+        links.append({"type": norm_type(t), "to": resolve(notes, target), "note": ""})
+    if a.review is not None:
+        review = when(a.review)
+    else:
+        review = when(DEFAULT_REVIEW[a.source])
+    d = today().isoformat()
+    meta = {"title": title, "created": d, "updated": d,
+            "source": a.source, "status": "active"}
+    if a.version:
+        meta["version"] = clean(a.version)
+    if review:
+        meta["review"] = review
+    tags = sorted({slugify(t) for raw in (a.tag or []) for t in raw.split(",") if slugify(t)})
+    if tags:
+        meta["tags"] = ", ".join(tags)
+    save(g, Note(slug, meta, body.strip("\n"), links))
+    print("created %s" % slug)
+
+
+def cmd_log(a):
+    g = graph_dir(a)
+    day = today().isoformat()
+    p = g / "daily" / (day + ".md")
+    text = clean(" ".join(a.text))
+    if not text:
+        die(2, "nothing to log")
+    existing = p.read_text(encoding="utf-8") if p.exists() else "# %s\n\n" % day
+    if not existing.endswith("\n"):
+        existing += "\n"
+    write_text(p, existing + "- %s [%s] %s\n" % (dt.datetime.now().strftime("%H:%M"), a.source, text))
+    print("logged to daily/%s" % day)
+
+
+def cmd_link(a):
+    g = graph_dir(a)
+    notes = load_all(g)
+    src, dst, t = resolve(notes, a.src), resolve(notes, a.dst), norm_type(a.type)
+    if src == dst:
+        die(2, "a note cannot link to itself")
+    n = notes[src]
+    for l in n.links:
+        if l["to"] == dst and l["type"] == t:
+            print("already linked: %s %s %s" % (src, t, dst))
+            return
+    n.links.append({"type": t, "to": dst, "note": clean(a.note or "")})
+    touch(n)
+    save(g, n)
+    print("%s --%s--> %s" % (src, t, dst))
+
+
+def cmd_unlink(a):
+    g = graph_dir(a)
+    notes = load_all(g)
+    src, dst = resolve(notes, a.src), resolve(notes, a.dst)
+    t = norm_type(a.type) if a.type else None
+    n = notes[src]
+    keep = [l for l in n.links if not (l["to"] == dst and (t is None or l["type"] == t))]
+    removed = len(n.links) - len(keep)
+    if not removed:
+        die(3, "no link from %s to %s" % (src, dst))
+    n.links = keep
+    touch(n)
+    save(g, n)
+    print("removed %d link(s) from %s to %s" % (removed, src, dst))
+
+
+def cmd_show(a):
+    g = graph_dir(a)
+    ref = a.note.strip()
+    if DATE_RE.fullmatch(ref):
+        p = g / "daily" / (ref + ".md")
+        if not p.exists():
+            die(3, "no daily note for %s" % ref)
+        text = p.read_text(encoding="utf-8")
+        emit(a, {"daily": ref, "content": text}, text.rstrip("\n"))
+        return
+    notes = load_all(g)
+    s = resolve(notes, ref)
+    n = notes[s]
+    inc = incoming(notes)
+    out_links = [{"type": l["type"], "to": l["to"], "note": l["note"],
+                  "title": notes[l["to"]].title if l["to"] in notes else None}
+                 for l in n.links]
+    in_links = [{"type": t, "from": f, "note": nt, "title": notes[f].title}
+                for f, t, nt in inc.get(s, [])]
+    data = {"slug": s, "meta": n.meta, "body": n.body, "links_out": out_links, "links_in": in_links}
+    if a.json:
+        emit(a, data, "")
+        return
+    lines = ["# %s  [%s]" % (n.title, s)]
+    bits = ["source: " + n.meta.get("source", "?")]
+    for k in ("version", "created", "updated", "confirmed"):
+        if n.meta.get(k):
+            bits.append("%s: %s" % (k, n.meta[k]))
+    rev = n.meta.get("review")
+    if rev:
+        bits.append("review: %s (%s)" % (rev, review_phrase(rev)))
+    lines.append(" | ".join(bits))
+    if n.tags:
+        lines.append("tags: " + ", ".join(n.tags))
+    if n.status != "active":
+        lines.append("STATUS: %s%s" % (n.status, (" by [%s]" % n.meta["superseded_by"]) if n.meta.get("superseded_by") else ""))
+    if n.meta.get("supersedes"):
+        lines.append("supersedes: " + n.meta["supersedes"])
+    if n.body:
+        lines += ["", n.body]
+    if out_links:
+        lines += ["", "links out:"]
+        for l in out_links:
+            lines.append("  %-18s -> %s%s%s" % (
+                l["type"], l["to"],
+                ('  "%s"' % l["title"]) if l["title"] else "  (MISSING)",
+                ("  | " + l["note"]) if l["note"] else ""))
+    if in_links:
+        lines += ["", "links in:"]
+        for l in in_links:
+            lines.append("  %-18s <- %s  \"%s\"%s" % (
+                l["type"], l["from"], l["title"],
+                ("  | " + l["note"]) if l["note"] else ""))
+    print("\n".join(lines))
+
+
+def score(doc, toks):
+    t, b, tg = doc["title"].lower(), doc["body"].lower(), " ".join(doc["tags"]).lower()
+    s = 0
+    for k in toks:
+        if k in t:
+            s += 5
+        if k in tg:
+            s += 3
+        s += min(b.count(k), 5)
+    if s and all(k in (t + " " + b + " " + tg) for k in toks):
+        s += 3
+    return s
+
+
+def snippet(body, toks, width=140):
+    flat = " ".join(body.split())
+    low = flat.lower()
+    hits = [low.find(k) for k in toks if low.find(k) >= 0]
+    pos = min(hits) if hits else 0
+    start = max(0, pos - 40)
+    chunk = flat[start:start + width]
+    return ("..." if start > 0 else "") + chunk + ("..." if start + width < len(flat) else "")
+
+
+def cmd_search(a):
+    g = graph_dir(a)
+    notes = load_all(g)
+    toks = [t.lower() for t in a.query if t.strip()]
+    docs = []
+    for s, n in notes.items():
+        if n.status == "active" or a.all:
+            docs.append({"slug": s, "title": n.title, "body": n.body, "tags": n.tags,
+                         "kind": "note", "source": n.meta.get("source", ""),
+                         "updated": n.meta.get("updated", ""), "status": n.status,
+                         "review": n.meta.get("review", "")})
+    dd = g / "daily"
+    if dd.is_dir():
+        for p in sorted(dd.glob("*.md")):
+            docs.append({"slug": "daily/" + p.stem, "title": p.stem, "tags": [],
+                         "body": p.read_text(encoding="utf-8"), "kind": "daily",
+                         "source": "log", "updated": p.stem, "status": "active", "review": ""})
+    ranked = sorted(((score(d, toks), d) for d in docs), key=lambda x: (-x[0], x[1]["slug"]))
+    results, used = [], 0
+    for sc, d in ranked:
+        if sc <= 0 or len(results) >= a.limit:
+            break
+        d = dict(d, score=sc, snippet=snippet(d["body"], toks))
+        cost = (len(d["slug"]) + len(d["title"]) + len(d["snippet"]) + 30) // 4
+        if a.budget and results and used + cost > a.budget:
+            break
+        used += cost
+        results.append(d)
+    if a.json:
+        emit(a, [{k: v for k, v in r.items() if k != "body"} for r in results], "")
+        return
+    if not results:
+        print("no matches")
+        return
+    out = []
+    for r in results:
+        flag = "" if r["status"] == "active" else " (%s)" % r["status"]
+        out.append("%s  \"%s\"%s  [%s, %s]" % (r["slug"], r["title"], flag, r["source"], r["updated"]))
+        out.append("    " + r["snippet"])
+    print("\n".join(out))
+
+
+def cmd_list(a):
+    g = graph_dir(a)
+    notes = load_all(g)
+    inc = incoming(notes)
+    rows = []
+    for s, n in notes.items():
+        if a.status != "all" and n.status != a.status:
+            continue
+        if a.tag and slugify(a.tag) not in n.tags:
+            continue
+        rows.append({"slug": s, "title": n.title, "source": n.meta.get("source", ""),
+                     "updated": n.meta.get("updated", ""), "status": n.status,
+                     "out": len(n.links), "in": len(inc.get(s, []))})
+    rows.sort(key=lambda r: (r["updated"], r["slug"]), reverse=True)
+    if a.limit:
+        rows = rows[:a.limit]
+    emit(a, rows, "\n".join(
+        "%-44s %s  %-9s o:%d i:%d  %s" % (r["slug"], r["updated"], r["source"], r["out"], r["in"], r["title"])
+        for r in rows) or "no notes")
+
+
+def cmd_neighbors(a):
+    g = graph_dir(a)
+    notes = load_all(g)
+    s = resolve(notes, a.note)
+    inc = incoming(notes)
+    tf = norm_type(a.type) if a.type else None
+    edges, lines, seen = [], ["%s  \"%s\"" % (s, notes[s].title)], {s}
+
+    def walk(cur, depth):
+        if depth > a.depth:
+            return
+        found = []
+        for l in notes[cur].links:
+            if l["to"] in notes and (tf is None or l["type"] == tf):
+                found.append(("out", l["type"], l["to"], l["note"]))
+        for f, t, nt in inc.get(cur, []):
+            if tf is None or t == tf:
+                found.append(("in", t, f, nt))
+        for d, t, other, nt in found:
+            edges.append({"from": cur, "dir": d, "type": t, "other": other, "depth": depth})
+            lines.append("%s%s %-18s %s  \"%s\"%s" % (
+                "  " * depth, "->" if d == "out" else "<-", t, other, notes[other].title,
+                ("  | " + nt) if nt else ""))
+            if other not in seen:
+                seen.add(other)
+                walk(other, depth + 1)
+
+    walk(s, 1)
+    if len(lines) == 1:
+        lines.append("  (no links)")
+    emit(a, edges, "\n".join(lines))
+
+
+def cmd_stale(a):
+    g = graph_dir(a)
+    notes = load_all(g)
+    cutoff = when(a.within)
+    cutoff = cutoff if cutoff else today().isoformat()
+    due, undated = [], []
+    for s, n in notes.items():
+        if n.status != "active":
+            continue
+        rev = n.meta.get("review")
+        if not rev:
+            undated.append(s)
+        elif rev <= cutoff:
+            due.append({"slug": s, "review": rev, "source": n.meta.get("source", ""),
+                        "version": n.meta.get("version", ""), "title": n.title})
+    due.sort(key=lambda r: r["review"])
+    text = []
+    for r in due:
+        text.append("%-44s review %s (%s)  %s%s" % (
+            r["slug"], r["review"], review_phrase(r["review"]), r["source"],
+            ("  " + r["version"]) if r["version"] else ""))
+    if undated:
+        text.append("no review date: " + ", ".join(sorted(undated)))
+    emit(a, {"due": due, "undated": sorted(undated)}, "\n".join(text) or "nothing due")
+
+
+def cmd_confirm(a):
+    g = graph_dir(a)
+    notes = load_all(g)
+    n = notes[resolve(notes, a.note)]
+    review = when(a.review) if a.review is not None else when(DEFAULT_REVIEW.get(n.meta.get("source", "observed"), "+60d"))
+    n.meta["confirmed"] = today().isoformat()
+    if review:
+        n.meta["review"] = review
+    else:
+        n.meta.pop("review", None)
+    if a.version:
+        n.meta["version"] = clean(a.version)
+    touch(n)
+    save(g, n)
+    print("confirmed %s%s" % (n.slug, (", next review " + review) if review else ""))
+
+
+def cmd_set(a):
+    g = graph_dir(a)
+    notes = load_all(g)
+    n = notes[resolve(notes, a.note)]
+    k, v = a.key, a.value
+    if k not in SETTABLE:
+        die(2, "can set: %s" % ", ".join(SETTABLE))
+    if k == "source":
+        if v not in SOURCES:
+            die(2, "source must be one of: %s" % ", ".join(SOURCES))
+        n.meta[k] = v
+    elif k == "review":
+        r = when(v)
+        if r:
+            n.meta[k] = r
+        else:
+            n.meta.pop(k, None)
+    elif k == "tags":
+        n.meta[k] = ", ".join(sorted({slugify(t) for t in v.split(",") if slugify(t)}))
+        if not n.meta[k]:
+            n.meta.pop(k)
+    else:
+        n.meta[k] = clean(v)
+    touch(n)
+    save(g, n)
+    print("set %s on %s" % (k, n.slug))
+
+
+def cmd_append(a):
+    g = graph_dir(a)
+    notes = load_all(g)
+    n = notes[resolve(notes, a.note)]
+    text = sys.stdin.read() if a.text == ["-"] else " ".join(a.text)
+    if not text.strip():
+        die(2, "nothing to append")
+    n.body = (n.body.rstrip("\n") + "\n\n" + text.strip("\n")).strip("\n")
+    touch(n)
+    save(g, n)
+    print("appended to %s" % n.slug)
+
+
+def cmd_supersede(a):
+    g = graph_dir(a)
+    notes = load_all(g)
+    old, new = resolve(notes, a.old), resolve(notes, a.new)
+    if old == new:
+        die(2, "a note cannot supersede itself")
+    o, n = notes[old], notes[new]
+    o.meta["status"] = "superseded"
+    o.meta["superseded_by"] = new
+    prior = [x for x in n.meta.get("supersedes", "").split(",") if x.strip()]
+    n.meta["supersedes"] = ", ".join(sorted(set(x.strip() for x in prior) | {old}))
+    touch(o)
+    touch(n)
+    save(g, o)
+    save(g, n)
+    print("%s is superseded by %s" % (old, new))
+
+
+def cmd_check(a):
+    g = graph_dir(a)
+    errs = []
+    notes = load_all(g, errors=errs)
+    issues = [{"level": "error", "note": "", "message": m} for m in errs]
+    inc = incoming(notes)
+
+    def add(level, note, msg):
+        issues.append({"level": level, "note": note, "message": msg})
+
+    for s, n in notes.items():
+        if n.meta.get("source") not in SOURCES:
+            add("error", s, "source is missing or not one of %s" % "/".join(SOURCES))
+        for k in ("created", "updated", "review", "confirmed"):
+            v = n.meta.get(k)
+            if v:
+                try:
+                    dt.date.fromisoformat(v)
+                except ValueError:
+                    add("error", s, "%s is not a date: %s" % (k, v))
+        for l in n.links:
+            if l["type"] not in LINK_TYPES:
+                add("error", s, "unknown link type '%s'" % l["type"])
+            if l["to"] not in notes:
+                add("error", s, "link to missing note '%s'" % l["to"])
+        if n.status == "superseded":
+            sb = n.meta.get("superseded_by")
+            if not sb:
+                add("error", s, "superseded but superseded_by is not set")
+            elif sb not in notes:
+                add("error", s, "superseded_by points at missing note '%s'" % sb)
+        for w in sorted(set(WIKILINK.findall(n.body))):
+            if slugify(w) not in notes and w.strip() not in notes:
+                add("warn", s, "body mentions [[%s]] but no such note" % w)
+        if n.status == "active" and not n.meta.get("review"):
+            add("warn", s, "no review date")
+        if n.status == "active" and not n.links and not inc.get(s):
+            add("info", s, "no links in or out")
+    order = {"error": 0, "warn": 1, "info": 2}
+    issues.sort(key=lambda i: (order[i["level"]], i["note"]))
+    counts = {k: sum(1 for i in issues if i["level"] == k) for k in order}
+    text = ["%-5s %s%s" % (i["level"], (i["note"] + ": ") if i["note"] else "", i["message"]) for i in issues]
+    text.append("%d notes, %d errors, %d warnings, %d info" % (len(notes), counts["error"], counts["warn"], counts["info"]))
+    emit(a, {"notes": len(notes), "counts": counts, "issues": issues}, "\n".join(text))
+    return 1 if counts["error"] else 0
+
+
+# ----------------------------------------------------------------- parser
+
+def build_parser():
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--graph", help="graph directory (default $ANOTE_GRAPH or ~/.hermes/graph)")
+    common.add_argument("--json", action="store_true", help="machine-readable output")
+    p = argparse.ArgumentParser(prog="anote", description=__doc__.strip().splitlines()[0])
+    sub = p.add_subparsers(dest="cmd", required=True, metavar="command")
+
+    def cmd(name, fn, help_):
+        sp = sub.add_parser(name, parents=[common], help=help_, description=help_)
+        sp.set_defaults(fn=fn)
+        return sp
+
+    cmd("init", cmd_init, "create the graph directories")
+    cmd("types", cmd_types, "list link types and what they mean")
+
+    sp = cmd("add", cmd_add, "create a note (provenance is required)")
+    sp.add_argument("title")
+    sp.add_argument("--source", required=True, choices=SOURCES,
+                    help="told = a person said it; observed = I saw it happen; inferred = I concluded it")
+    sp.add_argument("--body", help="note text, or - to read stdin")
+    sp.add_argument("--version", help="what this was true for, e.g. 'hermes 0.19.0'")
+    sp.add_argument("--review", help="YYYY-MM-DD, +30d, +6w, +3m or none (default depends on source)")
+    sp.add_argument("--tag", action="append", help="repeatable or comma-separated")
+    sp.add_argument("--link", action="append", help="TYPE:NOTE, repeatable")
+    sp.add_argument("--slug", help="override the filename slug")
+
+    sp = cmd("log", cmd_log, "append a line to today's daily log")
+    sp.add_argument("text", nargs="+")
+    sp.add_argument("--source", choices=SOURCES, default="observed")
+
+    sp = cmd("link", cmd_link, "link one note to another with a typed link")
+    sp.add_argument("src")
+    sp.add_argument("type")
+    sp.add_argument("dst")
+    sp.add_argument("--note", help="why, in a few words")
+
+    sp = cmd("unlink", cmd_unlink, "remove links from one note to another")
+    sp.add_argument("src")
+    sp.add_argument("dst")
+    sp.add_argument("--type")
+
+    sp = cmd("show", cmd_show, "print a note with its links in and out (or a daily note by date)")
+    sp.add_argument("note")
+
+    sp = cmd("search", cmd_search, "ranked search over notes and daily logs")
+    sp.add_argument("query", nargs="+")
+    sp.add_argument("--limit", type=int, default=10)
+    sp.add_argument("--budget", type=int, default=0, help="stop after roughly this many tokens of output")
+    sp.add_argument("--all", action="store_true", help="include superseded notes")
+
+    sp = cmd("list", cmd_list, "list notes, newest first")
+    sp.add_argument("--tag")
+    sp.add_argument("--status", choices=("active", "superseded", "all"), default="active")
+    sp.add_argument("--limit", type=int, default=0)
+
+    sp = cmd("neighbors", cmd_neighbors, "walk the link web out from a note")
+    sp.add_argument("note")
+    sp.add_argument("--depth", type=int, default=1)
+    sp.add_argument("--type", help="only follow this link type")
+
+    sp = cmd("stale", cmd_stale, "notes whose review date has arrived")
+    sp.add_argument("--within", default="0d", help="also include reviews due within this window, e.g. 14d")
+
+    sp = cmd("confirm", cmd_confirm, "mark a note re-checked and push its review date out")
+    sp.add_argument("note")
+    sp.add_argument("--review")
+    sp.add_argument("--version")
+
+    sp = cmd("set", cmd_set, "change title, source, version, review or tags")
+    sp.add_argument("note")
+    sp.add_argument("key")
+    sp.add_argument("value")
+
+    sp = cmd("append", cmd_append, "add text to the end of a note")
+    sp.add_argument("note")
+    sp.add_argument("text", nargs="+", help="text, or - to read stdin")
+
+    sp = cmd("supersede", cmd_supersede, "retire a note in favor of a newer one")
+    sp.add_argument("old")
+    sp.add_argument("new")
+
+    cmd("check", cmd_check, "lint the graph: broken links, bad dates, missing provenance")
+    return p
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    try:
+        return args.fn(args) or 0
+    except Fail as e:
+        print("anote: " + e.msg, file=sys.stderr)
+        return e.code
+    except BrokenPipeError:
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
