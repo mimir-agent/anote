@@ -20,11 +20,16 @@ export function when(value: string | undefined | null): string | null {
   die(2, `cannot read date '${value}' (use YYYY-MM-DD, +30d, +6w, +3m or none)`);
 }
 
-/** "overdue by 3d", "due today" or "in 5d". */
-export function reviewPhrase(rev: string): string {
+/** Parse a note's stored review date, or fail (exit 1) naming the note. `anote check` reports the same fault. */
+export function reviewDate(slug: string, rev: string): number {
   const d = parseDate(rev);
-  if (d === null) throw new Error(`Invalid isoformat string: '${rev}'`);
-  const days = daysBetween(d, today());
+  if (d === null) die(1, `${slug}: review is not a date: '${rev}' (run anote check)`);
+  return d;
+}
+
+/** "overdue by 3d", "due today" or "in 5d". */
+export function reviewPhrase(slug: string, rev: string): string {
+  const days = daysBetween(reviewDate(slug, rev), today());
   if (days < 0) return `overdue by ${-days}d`;
   if (days === 0) return "due today";
   return `in ${days}d`;

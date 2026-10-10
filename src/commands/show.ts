@@ -66,7 +66,7 @@ export function cmdShow(a: Args): void {
     if (n.meta[k]) bits.push(`${k}: ${n.meta[k]}`);
   }
   const rev = n.meta["review"];
-  if (rev) bits.push(`review: ${rev} (${reviewPhrase(rev)})`);
+  if (rev) bits.push(`review: ${rev} (${reviewPhrase(n.slug, rev)})`);
   lines.push(bits.join(" | "));
   if (n.tags.length > 0) lines.push("tags: " + n.tags.join(", "));
   if (n.status !== "active") {
