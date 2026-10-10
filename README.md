@@ -17,12 +17,23 @@ again, and notes connect to each other with typed links.
 
 ## Install
 
+From npm (Node 24 or newer):
+
+```sh
+npm i -g anote
+anote init
+```
+
+From source, which runs the TypeScript directly:
+
 ```sh
 git clone https://github.com/mimir-agent/anote.git
 cd anote && npm install      # only needed for the tests and typechecking
 ln -s "$PWD/anote" ~/.local/bin/anote   # or any directory on your PATH
 anote init
 ```
+
+Publishing needs `npm ci` first, because `prepack` builds `dist/` with the dev dependencies.
 
 The graph lives in `~/.hermes/graph` by default. Set `ANOTE_GRAPH` or pass
 `--graph DIR` to put it somewhere else. Commands that write take a lock
