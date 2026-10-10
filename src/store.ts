@@ -50,6 +50,53 @@ export function loadAll(g: string, errors?: string[]): Notes {
   return notes;
 }
 
+const LOCK_POLL_MS = 20;
+
+function lockTimeoutMs(): number {
+  const raw = process.env["ANOTE_LOCK_TIMEOUT_MS"];
+  if (raw === undefined || raw === "") return 10_000;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Fail(1, `ANOTE_LOCK_TIMEOUT_MS must be a whole number of milliseconds, got '${raw}'`);
+  }
+  return n;
+}
+
+/**
+ * Run `fn` while holding the graph's write lock: the directory `<graph>/.lock`,
+ * created atomically with mkdir. Wraps the whole load-modify-save of a command
+ * so a second writer sees the first writer's result. Waits up to
+ * $ANOTE_LOCK_TIMEOUT_MS (default 10s), then exits 1. The lock is removed in
+ * `finally`; a holder killed with SIGKILL leaves it behind (remove it by hand).
+ */
+export function withGraphLock<T>(g: string, fn: () => T): T {
+  const lock = path.join(g, ".lock");
+  const deadline = Date.now() + lockTimeoutMs();
+  const nap = new Int32Array(new SharedArrayBuffer(4));
+  for (;;) {
+    try {
+      fs.mkdirSync(lock);
+      break;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        fs.mkdirSync(g, { recursive: true }); // first write into a graph that does not exist yet
+        continue;
+      }
+      if (code !== "EEXIST") throw e;
+      if (Date.now() >= deadline) {
+        throw new Fail(1, `graph is locked (${lock}); another anote is writing. If none is running, remove that directory.`);
+      }
+      Atomics.wait(nap, 0, 0, LOCK_POLL_MS);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    fs.rmdirSync(lock);
+  }
+}
+
 export function save(g: string, n: Note): void {
   writeText(path.join(g, "notes", n.slug + ".md"), dump(n));
 }
