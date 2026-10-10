@@ -20,7 +20,7 @@ again, and notes connect to each other with typed links.
 ```sh
 git clone https://github.com/mimir-agent/anote.git
 cd anote && npm install      # only needed for the tests and typechecking
-ln -s "$PWD/anote/anote" ~/.local/bin/anote   # or any directory on your PATH
+ln -s "$PWD/anote" ~/.local/bin/anote   # or any directory on your PATH
 anote init
 ```
 
