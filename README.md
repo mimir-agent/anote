@@ -8,7 +8,8 @@ confident wrong answer. anote is built around that problem: every note records
 what kind of note it is, who said it, what it was true for, and when to look at it
 again, and notes connect to each other with typed links.
 
-- One Python file, standard library only, Python 3.9 or newer.
+- TypeScript on Node 24 or newer, run directly with Node's built-in type
+  stripping. No runtime dependencies and no build step.
 - Notes are plain markdown files. There is no database, so the files are the
   source of truth and anything else can be rebuilt from them.
 - Output is short and has a `--json` mode, so an agent can read it cheaply.
@@ -18,6 +19,7 @@ again, and notes connect to each other with typed links.
 
 ```sh
 git clone https://github.com/mimir-agent/anote.git
+cd anote && npm install      # only needed for the tests and typechecking
 ln -s "$PWD/anote/anote" ~/.local/bin/anote   # or any directory on your PATH
 anote init
 ```
@@ -200,7 +202,9 @@ directory your agent reads.
 ## Tests
 
 ```sh
-python3 -I -m unittest discover -s tests
+npm install
+npm test            # node:test, runs the real CLI against temp directories
+npm run typecheck   # tsc --noEmit, strict
 ```
 
 ## License
