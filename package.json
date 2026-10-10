@@ -3,14 +3,33 @@
   "version": "0.2.0",
   "description": "Linked, provenance-stamped markdown notes for an agent",
   "type": "module",
-  "private": true,
   "license": "MIT",
-  "bin": { "anote": "./anote" },
-  "engines": { "node": ">=24" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mimir-agent/anote.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mimir-agent/anote/issues"
+  },
+  "homepage": "https://github.com/mimir-agent/anote#readme",
+  "bin": {
+    "anote": "./bin/anote.js"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "dist/",
+    "bin/anote.js",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --disable-warning=ExperimentalWarning --test \"tests/*.test.ts\"",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\" && npm run build"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
