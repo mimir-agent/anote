@@ -13,7 +13,7 @@ again, and notes connect to each other with typed links.
 - Notes are plain markdown files. There is no database, so the files are the
   source of truth and anything else can be rebuilt from them.
 - Output is short and has a `--json` mode, so an agent can read it cheaply.
-- A ready-made skill for agents lives in [`skills/anote`](skills/anote/SKILL.md).
+- A ready-made skill for agents ships in the package as `skills/anote/SKILL.md` ([on GitHub](https://github.com/mimir-agent/anote/blob/main/skills/anote/SKILL.md)).
 
 ## Install
 
@@ -199,10 +199,14 @@ time and a source.
 
 ## For agents
 
-[`skills/anote/SKILL.md`](skills/anote/SKILL.md) is a plain skill file an agent
-can load: when to log, how to pick a type, how to record provenance, and what to
-do with a note whose review date has passed. Copy it into whatever skills
-directory your agent reads.
+`skills/anote/SKILL.md` is a plain skill file an agent can load: when to log,
+how to pick a type, how to record provenance, and what to do with a note whose
+review date has passed. Copy it into whatever skills directory your agent reads.
+
+After an npm install, the file is inside the installed package. Find the install
+directory with `npm root -g`, then open
+`@mimir-agent/anote/skills/anote/SKILL.md` under it. The same file is on GitHub:
+[skills/anote/SKILL.md](https://github.com/mimir-agent/anote/blob/main/skills/anote/SKILL.md).
 
 ## Limits
 

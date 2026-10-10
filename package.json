@@ -1,6 +1,6 @@
 {
   "name": "@mimir-agent/anote",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Linked, provenance-stamped markdown notes for an agent",
   "type": "module",
   "license": "MIT",
@@ -20,6 +20,7 @@
   },
   "files": [
     "dist/",
+    "skills/",
     "bin/anote.js",
     "README.md",
     "LICENSE"
