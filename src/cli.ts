@@ -14,6 +14,7 @@ import { cmdList, cmdSearch } from "./commands/find.ts";
 import { cmdLink, cmdNeighbors, cmdUnlink } from "./commands/links.ts";
 import { cmdShow } from "./commands/show.ts";
 import type { CommandFn } from "./commands/types.ts";
+import { graphDir, withGraphLock } from "./store.ts";
 import { Fail, printErr, print } from "./util.ts";
 
 const pos = (name: string, more: Partial<PosSpec> = {}): PosSpec => ({ name, ...more });
@@ -29,6 +30,9 @@ const noteArgs = (): Spec => [
   val("--stance", { choices: STANCES }),
   flag("--person-ok"),
 ];
+
+// Commands that change the graph. Each runs its whole load-modify-save under the graph lock.
+const WRITERS = new Set(["add", "log", "promote", "link", "unlink", "confirm", "set", "append", "supersede"]);
 
 interface Command {
   run: CommandFn;
@@ -124,7 +128,8 @@ export function main(argv: string[]): number {
   try {
     const args = parseCommand(`anote ${first}`, HELP[first] as string, MAIN_USAGE, cmd.spec, argv.slice(i + 1), pre);
     args.command = first;
-    return cmd.run(args) || 0;
+    const run = cmd.run;
+    return (WRITERS.has(first) ? withGraphLock(graphDir(args.str("graph")), () => run(args)) : run(args)) || 0;
   } catch (e) {
     if (e instanceof HelpExit) return 0;
     if (e instanceof UsageError) return 2;

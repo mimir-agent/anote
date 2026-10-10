@@ -25,7 +25,8 @@ anote init
 ```
 
 The graph lives in `~/.hermes/graph` by default. Set `ANOTE_GRAPH` or pass
-`--graph DIR` to put it somewhere else.
+`--graph DIR` to put it somewhere else. Commands that write take a lock
+(the directory `<graph>/.lock`); if a crashed anote leaves it behind, remove it.
 
 ## Quick start
 
