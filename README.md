@@ -20,7 +20,7 @@ again, and notes connect to each other with typed links.
 From npm (Node 24 or newer):
 
 ```sh
-npm i -g anote
+npm i -g @mimir-agent/anote
 anote init
 ```
 

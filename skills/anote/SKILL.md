@@ -9,6 +9,8 @@ anote keeps notes for an agent that persists across sessions. Notes are
 markdown files. Each one records its type, who said it, what it was true for,
 and when to check it again, and notes connect through typed links.
 
+Install with `npm i -g @mimir-agent/anote`. The command is `anote`.
+
 New to the tool? Run `anote --help` and `anote types`. The graph lives in
 `$ANOTE_GRAPH`, or `~/.hermes/graph` if that is unset.
 

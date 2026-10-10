@@ -1,5 +1,5 @@
 {
-  "name": "anote",
+  "name": "@mimir-agent/anote",
   "version": "0.2.0",
   "description": "Linked, provenance-stamped markdown notes for an agent",
   "type": "module",
@@ -24,6 +24,9 @@
     "README.md",
     "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --disable-warning=ExperimentalWarning --test \"tests/*.test.ts\"",
