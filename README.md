@@ -78,7 +78,8 @@ prints whole lines only.
 (roughly 4 characters per token). The default is 2000. A budget under 200 is an
 error and exits non-zero. When anything was dropped, the last line says how many
 lines were left out, and that line counts inside the budget too. If every due
-note was dropped, the `due notes:` header is left out as well.
+note was dropped, the `due notes:` header is left out as well, and the same goes
+for the `log lines:` header when every log line was dropped.
 
 A small graph with two overdue notes, one note not yet due, and five log lines
 over two days, on 2026-10-13:
