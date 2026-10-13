@@ -67,6 +67,33 @@ the log and the agent asks the person it works for, instead of forcing it into
 the closest type. `anote promote` turns a numbered log line into a note later
 and leaves a trail in the log.
 
+## Session start: anote brief
+
+`anote brief` prints what an agent should read when a session starts: notes
+whose review date has passed, most overdue first, then the newest log lines.
+It fills in that order and stops at the first line that does not fit, so it
+prints whole lines only.
+
+`--budget` is the size of the printed output in characters, newlines included
+(roughly 4 characters per token). The default is 2000. A budget under 200 is an
+error and exits non-zero. When anything was dropped, the last line says how many
+lines were left out, and that line counts inside the budget too. If every due
+note was dropped, the `due notes:` header is left out as well.
+
+A small graph with two overdue notes, one note not yet due, and five log lines
+over two days, on 2026-10-13:
+
+```sh
+$ anote brief --budget 400
+due notes:
+  deploy-runbook  "Deploy runbook"  review 2026-10-01
+  cron-jobs-fall-back-to-email  "Cron jobs fall back to email"  review 2026-10-09
+log lines:
+  2026-10-13 10:15 [observed] token for the deploy account expires 2026-11-02
+  2026-10-13 09:32 [inferred] the email fallback fires when deliver has no origin
+(3 more left out)
+```
+
 ## Note types
 
 A note has exactly one type. The set is fixed, and `anote types` prints it.
