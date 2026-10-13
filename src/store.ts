@@ -3,7 +3,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Note, dump, parse } from "./frontmatter.ts";
 import type { Link } from "./frontmatter.ts";
-import { Fail, clean, cmp, die, expandPath, readText, slugify, today, isoDate, writeText } from "./util.ts";
+import { reviewDate } from "./dates.ts";
+import { Fail, clean, cmp, die, expandPath, readText, slugify, splitlines, today, isoDate, writeText } from "./util.ts";
 
 export type Notes = Map<string, Note>;
 
@@ -146,6 +147,33 @@ export function incoming(notes: Notes): Map<string, Incoming[]> {
 
 export function touch(n: Note): void {
   n.meta["updated"] = isoDate(today());
+}
+
+export interface Due {
+  slug: string;
+  review: string;
+  source: string;
+  version: string;
+  title: string;
+}
+
+/** Active notes whose review date is on or before `cutoff`, earliest review first. */
+export function dueNotes(notes: Notes, cutoff: number): Due[] {
+  const due: Due[] = [];
+  for (const [s, n] of notes) {
+    if (n.status !== "active") continue;
+    const rev = n.meta["review"];
+    if (rev && reviewDate(s, rev) <= cutoff) {
+      due.push({ slug: s, review: rev, source: n.meta["source"] ?? "", version: n.meta["version"] ?? "", title: n.title });
+    }
+  }
+  due.sort((x, y) => cmp(x.review, y.review)); // stable, like Python's sort
+  return due;
+}
+
+/** The "- " bullet lines of a daily log file, in file order. */
+export function dailyBullets(file: string): string[] {
+  return splitlines(readText(file)).filter((l) => l.startsWith("- "));
 }
 
 export type { Link };

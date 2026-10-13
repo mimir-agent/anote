@@ -1,10 +1,10 @@
 // stale, confirm, set, append, supersede: commands that read or change existing notes.
 import type { Args } from "../args.ts";
-import { reviewDate, reviewPhrase, when } from "../dates.ts";
+import { reviewPhrase, when } from "../dates.ts";
 import {
   DEFAULT_REVIEW, SETTABLE, SOURCES, STANCES, checkType, normTags,
 } from "../schema.ts";
-import { getNote, graphDir, loadAll, resolve, save, touch } from "../store.ts";
+import { dueNotes, getNote, graphDir, loadAll, resolve, save, touch } from "../store.ts";
 import {
   clean, cmp, die, isoDate, lookup, padEnd, parseDate, print, readStdin, strip, stripNewlines, today,
 } from "../util.ts";
@@ -14,18 +14,11 @@ export function cmdStale(a: Args): void {
   const g = graphDir(a.str("graph"));
   const notes = loadAll(g);
   const cutoff = parseDate(when(a.need("within")) ?? isoDate(today())) as number;
-  const due: Array<{ slug: string; review: string; source: string; version: string; title: string }> = [];
-  const undated: string[] = [];
-  for (const [s, n] of notes) {
-    if (n.status !== "active") continue;
-    const rev = n.meta["review"];
-    if (!rev) undated.push(s);
-    else if (reviewDate(s, rev) <= cutoff) {
-      due.push({ slug: s, review: rev, source: n.meta["source"] ?? "", version: n.meta["version"] ?? "", title: n.title });
-    }
-  }
-  due.sort((x, y) => cmp(x.review, y.review)); // stable, like Python's sort
-  undated.sort(cmp);
+  const due = dueNotes(notes, cutoff);
+  const undated = [...notes]
+    .filter(([, n]) => n.status === "active" && !n.meta["review"])
+    .map(([s]) => s)
+    .sort(cmp);
   const text = due.map((r) =>
     `${padEnd(r.slug, 44)} review ${r.review} (${reviewPhrase(r.slug, r.review)})  ${r.source}${r.version ? "  " + r.version : ""}`);
   if (undated.length > 0) text.push("no review date: " + undated.join(", "));

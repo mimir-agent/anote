@@ -7,10 +7,10 @@ import type { Link, Meta } from "../frontmatter.ts";
 import { when } from "../dates.ts";
 import { DATE_RE, DEFAULT_REVIEW, LOG_LINE, checkType, normTags, normType } from "../schema.ts";
 import type { Source } from "../schema.ts";
-import { graphDir, loadAll, resolve, save } from "../store.ts";
+import { dailyBullets, graphDir, loadAll, resolve, save } from "../store.ts";
 import type { Notes } from "../store.ts";
 import {
-  clean, die, isoDate, nowHHMM, print, readStdin, readText, slugify, splitlines, stripNewlines, today, writeText,
+  clean, die, isoDate, nowHHMM, print, readStdin, readText, slugify, stripNewlines, today, writeText,
 } from "../util.ts";
 
 function typeFromArgs(a: Args): string {
@@ -94,7 +94,7 @@ export function cmdPromote(a: Args): void {
   if (!DATE_RE.test(date)) die(2, "date must be YYYY-MM-DD");
   const p = path.join(g, "daily", date + ".md");
   if (!fs.existsSync(p)) die(3, `no daily note for ${date}`);
-  const bullets = splitlines(readText(p)).filter((l) => l.startsWith("- "));
+  const bullets = dailyBullets(p);
   if (!(line >= 1 && line <= bullets.length)) {
     die(3, `line ${line} is out of range (1 to ${bullets.length})`);
   }
