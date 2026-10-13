@@ -166,6 +166,7 @@ optionally following one type. Assertions link to the question they answer with
 | `append NOTE TEXT` | add text to the end of a note |
 | `supersede OLD NEW` | retire a note in favor of a newer one |
 | `check` | lint the graph |
+| `brief` | due notes, then recent log lines, cut to `--budget` characters (default 2000) |
 
 A note can be named by slug, by exact title, or by a unique slug prefix.
 Dates accept `YYYY-MM-DD`, `+30d`, `+6w` or `+3m`.

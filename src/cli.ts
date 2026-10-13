@@ -7,6 +7,7 @@ import type { OptSpec, PosSpec, Spec } from "./args.ts";
 import { HELP, MAIN_HELP, MAIN_USAGE } from "./helptext.ts";
 import { MEDIA, NOTE_TYPES, SOURCES, STANCES } from "./schema.ts";
 import { cmdInit, cmdTypes } from "./commands/admin.ts";
+import { cmdBrief } from "./commands/brief.ts";
 import { cmdCheck } from "./commands/check.ts";
 import { cmdAdd, cmdLog, cmdPromote } from "./commands/create.ts";
 import { cmdAppend, cmdConfirm, cmdSet, cmdStale, cmdSupersede } from "./commands/edit.ts";
@@ -95,6 +96,7 @@ const COMMANDS: Record<string, Command> = {
   append: { run: cmdAppend, spec: [pos("note"), pos("text", { plus: true })] },
   supersede: { run: cmdSupersede, spec: [pos("old"), pos("new")] },
   check: { run: cmdCheck, spec: [] },
+  brief: { run: cmdBrief, spec: [val("--budget", { int: true, default: 2000 })] },
 };
 
 function mainUsageError(msg: string): number {
