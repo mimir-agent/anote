@@ -79,6 +79,15 @@ describe("brief", () => {
     assert.match(r.out, /log lines:\n\(\d+ more left out\)\n$/);
   });
 
+  it("leaves out the due notes header when every due note is dropped", () => {
+    c.add("Overdue " + "with a very long title ".repeat(8), ["--review", "2026-10-01"]);
+    writeDaily(c, "2026-10-08", ["- 09:00 [observed] a log line"]);
+    const r = c.run(["brief", "--budget", "200"]);
+    assert.equal(r.code, 0, r.err);
+    assert.ok(r.out.length <= 200, `printed ${r.out.length}`);
+    assert.equal(r.out, "log lines:\n(2 more left out)\n");
+  });
+
   it("drops only log lines when the due notes fit", () => {
     seed(c);
     const r = c.run(["brief", "--budget", "300"]);
