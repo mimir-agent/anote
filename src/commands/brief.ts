@@ -60,7 +60,10 @@ export function cmdBrief(a: Args): void {
   }
   const keptDue = due.slice(0, Math.min(kept, due.length));
   const keptLogs = logs.slice(0, Math.max(0, kept - due.length));
-  const lines = [...dueHead, ...keptDue, ...logHead, ...keptLogs];
+  // A "due notes:" header with nothing under it reads as "nothing due", so leave it out when
+  // every due note was dropped. Printing less than was counted keeps the output within the budget.
+  const dueSection = due.length > 0 && keptDue.length === 0 ? [] : [...dueHead, ...keptDue];
+  const lines = [...dueSection, ...logHead, ...keptLogs];
   if (kept < candidates.length) lines.push(trailer(candidates.length - kept));
   print(lines.join("\n"));
 }
