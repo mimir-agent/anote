@@ -76,7 +76,8 @@ describe("brief", () => {
     assert.match(r.out, /overdue-note-number-0/);
     assert.doesNotMatch(r.out, /overdue-note-number-5/);
     assert.doesNotMatch(r.out, /a log line/);
-    assert.match(r.out, /log lines:\n\(\d+ more left out\)\n$/);
+    assert.doesNotMatch(r.out, /log lines:/);
+    assert.match(r.out, /\n\(\d+ more left out\)\n$/);
   });
 
   it("leaves out the due notes header when every due note is dropped", () => {
@@ -85,7 +86,19 @@ describe("brief", () => {
     const r = c.run(["brief", "--budget", "200"]);
     assert.equal(r.code, 0, r.err);
     assert.ok(r.out.length <= 200, `printed ${r.out.length}`);
-    assert.equal(r.out, "log lines:\n(2 more left out)\n");
+    // The one log line is dropped too, so neither header is printed: only the trailer is left.
+    assert.equal(r.out, "(2 more left out)\n");
+  });
+
+  it("leaves out the log lines header when every log line is dropped", () => {
+    seed(c);
+    const r = c.run(["brief", "--budget", "200"]);
+    assert.equal(r.code, 0, r.err);
+    assert.ok(r.out.length <= 200, `printed ${r.out.length}`);
+    assert.doesNotMatch(r.out, /log lines:/);
+    for (const l of LOGS) assert.ok(!r.out.includes(l));
+    assert.match(r.out, /^due notes:\n/);
+    assert.match(r.out, /\n\(\d+ more left out\)\n$/);
   });
 
   it("drops only log lines when the due notes fit", () => {
