@@ -14,6 +14,9 @@ Install with `npm i -g @mimir-agent/anote`. The command is `anote`.
 New to the tool? Run `anote --help` and `anote types`. The graph lives in
 `$ANOTE_GRAPH`, or `~/.hermes/graph` if that is unset.
 
+At the start of a session, run `anote brief --budget N` (N in characters,
+roughly 4 per token) to see the notes due for review and the newest log lines.
+
 ## The rule that matters most: log first
 
 Anything new goes in the daily log:
