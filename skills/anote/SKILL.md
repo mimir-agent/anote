@@ -75,6 +75,13 @@ reality. Then run `anote confirm NOTE`, or write the corrected note and run
 `anote supersede OLD NEW`. Do not rewrite a wrong note into a different
 claim, because the old one is the record.
 
+When a new log line corrects an older one (Alex moved from Berlin to Lisbon),
+anote will not notice; you must. Promote both lines and run
+`anote supersede OLD NEW`, so search and `anote show DATE` mark the old log
+line as superseded and name the note that replaced it. If the fact is not
+worth a note, log the correction and name the old date: "Alex moved to
+Lisbon; corrects the 2026-10-01 log".
+
 Read cheaply: `anote search WORDS --budget 300`, `anote show NOTE`, and
 `anote neighbors NOTE --depth 2`. Run `anote stale --within 14d` to see what
 needs checking, and `anote check` after a batch of edits.

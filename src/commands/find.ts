@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Args } from "../args.ts";
 import { graphDir, incoming, loadAll, mdFiles } from "../store.ts";
+import { marker, supersededLog, type SupersededLine } from "../superseded.ts";
 import { cmp, cpLen, padEnd, print, readText, slugify, words } from "../util.ts";
 import { emit } from "./types.ts";
 
@@ -51,6 +52,11 @@ function snippet(body: string, toks: string[], width = 140): string {
   return (start > 0 ? "..." : "") + chunk + (start + width < flat.length ? "..." : "");
 }
 
+/** One indented line per superseded log line in a daily hit. */
+function markerLines(list: SupersededLine[]): string[] {
+  return list.map((s) => `    line ${s.line} ${marker(s)}`);
+}
+
 export function cmdSearch(a: Args): void {
   const g = graphDir(a.str("graph"));
   const notes = loadAll(g);
@@ -78,21 +84,25 @@ export function cmdSearch(a: Args): void {
   }
   const ranked = docs
     .map((d) => ({ sc: score(d, toks), d }))
-    .sort((x, y) => y.sc - x.sc || cmp(x.d.slug, y.d.slug));
+    // Equal scores: newest first (updated for notes, the log date for daily), then slug.
+    .sort((x, y) => y.sc - x.sc || cmp(y.d.updated, x.d.updated) || cmp(x.d.slug, y.d.slug));
+  const marked = supersededLog(g, notes);
   const limit = a.num("limit");
   const budget = a.num("budget");
-  const results: Array<Doc & { score: number; snippet: string }> = [];
+  const results: Array<Doc & { score: number; snippet: string; superseded: SupersededLine[] }> = [];
   let used = 0;
   for (const { sc, d } of ranked) {
     if (sc <= 0 || results.length >= limit) break;
-    const r = { ...d, score: sc, snippet: snippet(d.body, toks) };
-    const cost = Math.floor((cpLen(r.slug) + cpLen(r.title) + cpLen(r.snippet) + 30) / 4);
+    const superseded = d.kind === "daily" ? (marked.get(d.title) ?? []) : [];
+    const r = { ...d, score: sc, snippet: snippet(d.body, toks), superseded };
+    const marks = markerLines(r.superseded).reduce((n, l) => n + cpLen(l) + 1, 0);
+    const cost = Math.floor((cpLen(r.slug) + cpLen(r.title) + cpLen(r.snippet) + marks + 30) / 4);
     if (budget && results.length > 0 && used + cost > budget) break;
     used += cost;
     results.push(r);
   }
   if (a.flag("json")) {
-    // Same keys and order as the original, minus the body.
+    // Same keys and order as the original, minus the body, then superseded last.
     const rows = results.map((r) => {
       const row: Record<string, unknown> = {
         slug: r.slug, title: r.title, tags: r.tags, kind: r.kind,
@@ -100,7 +110,7 @@ export function cmdSearch(a: Args): void {
       if (r.kind === "note") row["type"] = r.type;
       Object.assign(row, {
         source: r.source, updated: r.updated, status: r.status, review: r.review,
-        score: r.score, snippet: r.snippet,
+        score: r.score, snippet: r.snippet, superseded: r.superseded,
       });
       return row;
     });
@@ -116,6 +126,7 @@ export function cmdSearch(a: Args): void {
     const flag = r.status === "active" ? "" : ` (${r.status})`;
     out.push(`${r.slug}  "${r.title}"${flag}  [${r.source}, ${r.updated}]`);
     out.push("    " + r.snippet);
+    out.push(...markerLines(r.superseded));
   }
   print(out.join("\n"));
 }
