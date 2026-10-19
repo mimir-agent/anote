@@ -1,0 +1,8 @@
+# Oven spring  [oven-spring]
+type: #concept
+source: inferred | created: 2026-10-01 | updated: 2026-10-01 | review: 2026-10-31 (in 22d)
+
+The last rise a loaf takes in the first minutes of baking.
+
+links in:
+  relates            <- kneading-time  "Kneading time"  | both shape the crumb

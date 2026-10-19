@@ -1,0 +1,9 @@
+{
+  "notes": 2,
+  "counts": {
+    "error": 0,
+    "warn": 0,
+    "info": 0
+  },
+  "issues": []
+}
