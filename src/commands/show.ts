@@ -73,6 +73,8 @@ export function cmdShow(a: Args): void {
   if (rev) bits.push(`review: ${rev} (${reviewPhrase(n.slug, rev)})`);
   lines.push(bits.join(" | "));
   if (n.tags.length > 0) lines.push("tags: " + n.tags.join(", "));
+  if (n.meta["url"]) lines.push("url: " + n.meta["url"]);
+  if (n.meta["published"]) lines.push("published: " + n.meta["published"]);
   if (n.status !== "active") {
     const by = n.meta["superseded_by"];
     lines.push(`STATUS: ${n.status}${by ? ` by [${by}]` : ""}`);

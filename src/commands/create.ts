@@ -7,6 +7,7 @@ import type { Link, Meta } from "../frontmatter.ts";
 import { when } from "../dates.ts";
 import { DATE_RE, DEFAULT_REVIEW, LOG_LINE, checkType, normTags, normType } from "../schema.ts";
 import type { Source } from "../schema.ts";
+import { parseWebUrl } from "../publish.ts";
 import { dailyBullets, graphDir, loadAll, resolve, save } from "../store.ts";
 import type { Notes } from "../store.ts";
 import {
@@ -56,6 +57,11 @@ function createNote(g: string, notes: Notes, a: Args, titleRaw: string, body: st
   if (review) meta["review"] = review;
   const tags = normTags(a.list("tag"));
   if (tags.length > 0) meta["tags"] = tags.join(", ");
+  const url = a.str("url")?.trim();
+  if (url !== undefined) {
+    if (!parseWebUrl(url)) die(2, "--url must be an absolute http or https URL");
+    meta["url"] = url;
+  }
   save(g, new Note(slug, meta, stripNewlines(body), links));
   return slug;
 }

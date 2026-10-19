@@ -192,19 +192,56 @@ optionally following one type. Assertions link to the question they answer with
 | `neighbors NOTE` | walk the link web |
 | `stale` | notes whose review date has arrived |
 | `confirm NOTE` | mark a note re-checked |
-| `set NOTE KEY VALUE` | change title, type, source, stance, version, review or tags |
+| `set NOTE KEY VALUE` | change title, type, source, stance, version, review, tags or url |
 | `append NOTE TEXT` | add text to the end of a note |
 | `supersede OLD NEW` | retire a note in favor of a newer one |
 | `check` | lint the graph |
 | `brief` | due notes, then recent log lines, cut to `--budget` characters (default 2000) |
 | `skill install` | copy the bundled skill into `--agent hermes`, `--agent claude` or `--dir DIR` |
 | `skill path` | print where the bundled skill file is |
+| `publish mark NOTE` | mark one note for publishing (see Publishing) |
+| `publish unmark NOTE` | clear that mark |
+| `publish preview` | print the records an export would write, and what is left out |
 
 A note can be named by slug, by exact title, or by a unique slug prefix.
 Dates accept `YYYY-MM-DD`, `+30d`, `+6w` or `+3m`.
 
 Exit codes: 0 ok, 1 runtime error or failed check, 2 usage error, 3 note not
 found or ambiguous. Data goes to stdout and errors go to stderr.
+
+## Publishing
+
+A note can carry the page it is about: `anote add ... --url URL` or
+`anote set NOTE url URL` (`none` clears it). Any note type in any graph may
+have one.
+
+anote can work out which records a note would become as Semble cards, but it
+sends nothing: there is no export command yet, and these commands open no
+network connection. `publish preview` also writes no file.
+
+- Nothing is published by default. Only `anote publish mark NOTE` sets
+  `published: yes`, and only `anote publish unmark NOTE` clears it; `set`
+  refuses those keys.
+- `publish mark` refuses (exit 2) person notes, daily logs, notes without a
+  url, urls that are not public http or https (localhost, `.local` names,
+  private or loopback IPs), and a url another marked note already has.
+- Marking records a hash of the title, body, url and links. A note changed
+  afterwards is left out until it is marked again.
+- A note becomes a URL card for its url plus a NOTE card with its body. A link
+  between two marked notes becomes a connection (`expands-on` is sent as
+  RELATED, with `[expands-on] ` at the start of its note). A marked hub becomes
+  a closed collection of the marked notes it links to; its description is the
+  first 500 bytes of its body, and hand order and link types are lost.
+- Links to or from unmarked notes are never part of a record. Type, source,
+  version, review date, stance, tags and slugs never are.
+- `publish preview [--json]` lists the cards, connections and collections, then
+  every note, link and daily log left out and why.
+- In a graph with at least one marked note, `check` also errors on a marked
+  person note, hash drift, `[[mentions]]` of unmarked notes in a marked body or
+  link note, duplicate urls, a body over 10000 bytes, a link note over 1000 and
+  a hub title over 100. A graph with no marked notes is checked as before.
+- Unmarking or superseding a marked note only stops future exports. It warns
+  that copies already sent may persist.
 
 ## File format
 

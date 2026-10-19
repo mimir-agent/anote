@@ -2,11 +2,12 @@
 import type { Args } from "../args.ts";
 import { reviewPhrase, when } from "../dates.ts";
 import {
-  DEFAULT_REVIEW, SETTABLE, SOURCES, STANCES, checkType, normTags,
+  DEFAULT_REVIEW, PUBLISH_KEYS, SETTABLE, SOURCES, STANCES, checkType, normTags,
 } from "../schema.ts";
+import { isMarked, parseWebUrl } from "../publish.ts";
 import { dueNotes, getNote, graphDir, loadAll, resolve, save, touch } from "../store.ts";
 import {
-  clean, cmp, die, isoDate, lookup, padEnd, parseDate, print, readStdin, strip, stripNewlines, today,
+  clean, cmp, die, isoDate, lookup, padEnd, parseDate, print, printErr, readStdin, strip, stripNewlines, today,
 } from "../util.ts";
 import { emit } from "./types.ts";
 
@@ -50,8 +51,16 @@ export function cmdSet(a: Args): void {
   const n = getNote(notes, resolve(notes, a.need("note")));
   const k = a.need("key");
   const v = a.need("value");
+  if ((PUBLISH_KEYS as readonly string[]).includes(k)) {
+    die(2, `${k} is changed only by \`anote publish mark\` and \`anote publish unmark\``);
+  }
   if (!(SETTABLE as readonly string[]).includes(k)) die(2, `can set: ${SETTABLE.join(", ")}`);
-  if (k === "type") {
+  if (k === "url") {
+    const url = v.trim();
+    if (url === "none") delete n.meta[k];
+    else if (parseWebUrl(url)) n.meta[k] = url;
+    else die(2, "url must be an absolute http or https URL, or none");
+  } else if (k === "type") {
     const newType = checkType(v);
     const head = newType.split(" ")[0];
     if (head === "person") die(2, "person notes are created with `add --type person --person-ok`");
@@ -110,4 +119,7 @@ export function cmdSupersede(a: Args): void {
   save(g, o);
   save(g, n);
   print(`${old} is superseded by ${next}`);
+  if (isMarked(o)) {
+    printErr(`anote: warning: ${old} is marked for publishing; superseding it stops future exports, but copies already sent may persist (G7)`);
+  }
 }

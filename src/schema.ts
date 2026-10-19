@@ -43,12 +43,16 @@ export const DEFAULT_REVIEW: Record<Source, string> = {
 };
 
 export const STANCES = ["held", "unheld"] as const;
-export const SETTABLE = ["title", "type", "source", "stance", "version", "review", "tags"] as const;
+export const SETTABLE = ["title", "type", "source", "stance", "version", "review", "tags", "url"] as const;
+
+/** Set only by `anote publish mark` and cleared only by `anote publish unmark` (G2). */
+export const PUBLISH_KEYS = ["published", "published_hash"] as const;
 
 /** Order keys are written to disk. Unknown keys follow, sorted. */
 export const META_ORDER = [
   "title", "type", "created", "updated", "source", "stance", "version",
   "review", "confirmed", "status", "tags", "supersedes", "superseded_by",
+  "url", "published", "published_hash",
 ];
 
 export const NOTE_TYPES: Record<string, string> = {

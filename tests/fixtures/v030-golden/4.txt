@@ -1,0 +1,23 @@
+{
+  "slug": "kneading-time",
+  "meta": {
+    "title": "Kneading time",
+    "type": "concept",
+    "created": "2026-10-01",
+    "updated": "2026-10-01",
+    "source": "observed",
+    "review": "2026-11-30",
+    "status": "active",
+    "tags": "baking"
+  },
+  "body": "How long dough is worked before the first rise. See [[oven-spring]].",
+  "links_out": [
+    {
+      "type": "relates",
+      "to": "oven-spring",
+      "note": "both shape the crumb",
+      "title": "Oven spring"
+    }
+  ],
+  "links_in": []
+}

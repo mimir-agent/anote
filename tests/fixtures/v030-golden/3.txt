@@ -1,0 +1,9 @@
+# Kneading time  [kneading-time]
+type: #concept
+source: observed | created: 2026-10-01 | updated: 2026-10-01 | review: 2026-11-30 (in 52d)
+tags: baking
+
+How long dough is worked before the first rise. See [[oven-spring]].
+
+links out:
+  relates            -> oven-spring  "Oven spring"  | both shape the crumb

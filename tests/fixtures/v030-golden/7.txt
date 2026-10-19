@@ -1,0 +1,9 @@
+[
+  {
+    "from": "oven-spring",
+    "dir": "in",
+    "type": "relates",
+    "other": "kneading-time",
+    "depth": 1
+  }
+]
