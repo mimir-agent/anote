@@ -5,6 +5,7 @@ import type { Args } from "../args.ts";
 import { reviewPhrase } from "../dates.ts";
 import { DATE_RE } from "../schema.ts";
 import { getNote, graphDir, incoming, loadAll, resolve } from "../store.ts";
+import { marker, supersededLog } from "../superseded.ts";
 import { die, padEnd, print, readText, splitlines } from "../util.ts";
 import { emit } from "./types.ts";
 
@@ -17,16 +18,19 @@ function showDaily(a: Args, g: string, ref: string): void {
   const p = path.join(g, "daily", ref + ".md");
   if (!fs.existsSync(p)) die(3, `no daily note for ${ref}`);
   const text = readText(p);
+  // An unreadable note file must not stop the log from showing; `anote check` reports it.
+  const superseded = supersededLog(g, loadAll(g, [])).get(ref) ?? [];
   let count = 0;
   const view: string[] = [];
   for (let line of splitlines(text.replace(/\n+$/, ""))) {
     if (line.startsWith("- ")) {
       count++;
       line = `[${count}] ${line}`;
+      for (const s of superseded) if (s.line === count) line += "  " + marker(s);
     }
     view.push(line);
   }
-  emit(a, { daily: ref, content: text }, view.join("\n"));
+  emit(a, { daily: ref, content: text, superseded }, view.join("\n"));
 }
 
 export function cmdShow(a: Args): void {
