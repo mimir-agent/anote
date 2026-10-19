@@ -14,6 +14,7 @@ import { cmdAppend, cmdConfirm, cmdSet, cmdStale, cmdSupersede } from "./command
 import { cmdList, cmdSearch } from "./commands/find.ts";
 import { cmdLink, cmdNeighbors, cmdUnlink } from "./commands/links.ts";
 import { cmdShow } from "./commands/show.ts";
+import { AGENTS, cmdSkillInstall, cmdSkillPath } from "./commands/skill.ts";
 import type { CommandFn } from "./commands/types.ts";
 import { graphDir, withGraphLock } from "./store.ts";
 import { Fail, printErr, print } from "./util.ts";
@@ -99,6 +100,15 @@ const COMMANDS: Record<string, Command> = {
   brief: { run: cmdBrief, spec: [val("--budget", { int: true, default: 2000 })] },
 };
 
+// Commands with subcommands: `anote skill install` and `anote skill path`.
+// Neither touches the graph.
+const GROUPS: Record<string, Record<string, Command>> = {
+  skill: {
+    install: { run: cmdSkillInstall, spec: [val("--agent", { choices: AGENTS }), val("--dir"), flag("--force")] },
+    path: { run: cmdSkillPath, spec: [] },
+  },
+};
+
 function mainUsageError(msg: string): number {
   printErr(MAIN_USAGE);
   printErr(`anote: error: ${msg}`);
@@ -122,16 +132,34 @@ export function main(argv: string[]): number {
   }
   const first = argv[i];
   if (first === undefined) return mainUsageError("the following arguments are required: command");
-  const names = Object.keys(COMMANDS);
-  const cmd = Object.hasOwn(COMMANDS, first) ? COMMANDS[first] : undefined;
+  const names = [...Object.keys(COMMANDS), ...Object.keys(GROUPS)];
+  let name = first;
+  let rest = argv.slice(i + 1);
+  let cmd = Object.hasOwn(COMMANDS, first) ? COMMANDS[first] : undefined;
+  const group = Object.hasOwn(GROUPS, first) ? GROUPS[first] : undefined;
+  if (group) {
+    const sub = rest[0];
+    if (sub === undefined || sub === "-h" || sub === "--help") {
+      print(HELP[first] as string);
+      return 0;
+    }
+    cmd = Object.hasOwn(group, sub) ? group[sub] : undefined;
+    if (!cmd) {
+      printErr((HELP[first] as string).split("\n\n")[0] as string);
+      printErr(`anote ${first}: error: invalid choice: '${sub}' (choose from ${Object.keys(group).map((n) => `'${n}'`).join(", ")})`);
+      return 2;
+    }
+    name = `${first} ${sub}`;
+    rest = rest.slice(1);
+  }
   if (!cmd) {
     return mainUsageError(`argument command: invalid choice: '${first}' (choose from ${names.map((n) => `'${n}'`).join(", ")})`);
   }
   try {
-    const args = parseCommand(`anote ${first}`, HELP[first] as string, MAIN_USAGE, cmd.spec, argv.slice(i + 1), pre);
-    args.command = first;
+    const args = parseCommand(`anote ${name}`, HELP[name] as string, MAIN_USAGE, cmd.spec, rest, pre);
+    args.command = name;
     const run = cmd.run;
-    return (WRITERS.has(first) ? withGraphLock(graphDir(args.str("graph")), () => run(args)) : run(args)) || 0;
+    return (WRITERS.has(name) ? withGraphLock(graphDir(args.str("graph")), () => run(args)) : run(args)) || 0;
   } catch (e) {
     if (e instanceof HelpExit) return 0;
     if (e instanceof UsageError) return 2;

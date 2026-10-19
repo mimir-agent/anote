@@ -152,7 +152,7 @@ export function readText(file: string): string {
 }
 
 /** Write via a temp file in the same directory, then rename (atomic). */
-export function writeText(file: string, text: string): void {
+export function writeText(file: string, text: string | Uint8Array): void {
   const dir = path.dirname(file);
   fs.mkdirSync(dir, { recursive: true });
   const tmp = path.join(dir, `.tmp-${process.pid}-${Math.random().toString(36).slice(2)}.md`);

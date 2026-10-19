@@ -33,6 +33,8 @@ ln -s "$PWD/anote" ~/.local/bin/anote   # or any directory on your PATH
 anote init
 ```
 
+npm has the latest published release; `main` may be ahead of it.
+
 Publishing needs `npm ci` first, because `prepack` builds `dist/` with the dev dependencies.
 
 The graph lives in `~/.hermes/graph` by default. Set `ANOTE_GRAPH` or pass
@@ -195,6 +197,8 @@ optionally following one type. Assertions link to the question they answer with
 | `supersede OLD NEW` | retire a note in favor of a newer one |
 | `check` | lint the graph |
 | `brief` | due notes, then recent log lines, cut to `--budget` characters (default 2000) |
+| `skill install` | copy the bundled skill into `--agent hermes`, `--agent claude` or `--dir DIR` |
+| `skill path` | print where the bundled skill file is |
 
 A note can be named by slug, by exact title, or by a unique slug prefix.
 Dates accept `YYYY-MM-DD`, `+30d`, `+6w` or `+3m`.
@@ -230,12 +234,24 @@ time and a source.
 
 `skills/anote/SKILL.md` is a plain skill file an agent can load: when to log,
 how to pick a type, how to record provenance, and what to do with a note whose
-review date has passed. Copy it into whatever skills directory your agent reads.
+review date has passed. `anote skill install` copies it into an agent's skills
+directory, so the skill matches the installed CLI:
 
-After an npm install, the file is inside the installed package. Find the install
-directory with `npm root -g`, then open
-`@mimir-agent/anote/skills/anote/SKILL.md` under it. The same file is on GitHub:
+```sh
+anote skill install --agent hermes   # $HERMES_HOME/skills, else ~/.hermes/skills
+anote skill install --agent claude   # ~/.claude/skills
+anote skill install --dir DIR        # any other agent: writes DIR/anote/SKILL.md
+```
+
+An identical file is left alone, a different one is only replaced with `--force`,
+and if the agent already has another skill named anote, nothing is written.
+`anote skill path` prints where the bundled file is. The same file is on GitHub:
 [skills/anote/SKILL.md](https://github.com/mimir-agent/anote/blob/main/skills/anote/SKILL.md).
+
+The `skill` command is on `main` and not yet in a release on npm. Until a
+release published after it is, use it from source. v0.3.0 is tagged but not
+published, and that tag predates the `skill` command, so a publish from it will
+not include it.
 
 ## Limits
 
