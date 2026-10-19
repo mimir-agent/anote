@@ -13,6 +13,7 @@ import { cmdAdd, cmdLog, cmdPromote } from "./commands/create.ts";
 import { cmdAppend, cmdConfirm, cmdSet, cmdStale, cmdSupersede } from "./commands/edit.ts";
 import { cmdList, cmdSearch } from "./commands/find.ts";
 import { cmdLink, cmdNeighbors, cmdUnlink } from "./commands/links.ts";
+import { cmdPublishMark, cmdPublishPreview, cmdPublishUnmark } from "./commands/publish.ts";
 import { cmdShow } from "./commands/show.ts";
 import { AGENTS, cmdSkillInstall, cmdSkillPath } from "./commands/skill.ts";
 import type { CommandFn } from "./commands/types.ts";
@@ -34,7 +35,9 @@ const noteArgs = (): Spec => [
 ];
 
 // Commands that change the graph. Each runs its whole load-modify-save under the graph lock.
-const WRITERS = new Set(["add", "log", "promote", "link", "unlink", "confirm", "set", "append", "supersede"]);
+const WRITERS = new Set([
+  "add", "log", "promote", "link", "unlink", "confirm", "set", "append", "supersede", "publish mark", "publish unmark",
+]);
 
 interface Command {
   run: CommandFn;
@@ -51,6 +54,7 @@ const COMMANDS: Record<string, Command> = {
       ...noteArgs(),
       val("--source", { required: true, choices: SOURCES }),
       val("--body"), val("--version"), val("--review"), many("--tag"), many("--link"), val("--slug"),
+      val("--url"),
     ],
   },
   log: {
@@ -100,12 +104,18 @@ const COMMANDS: Record<string, Command> = {
   brief: { run: cmdBrief, spec: [val("--budget", { int: true, default: 2000 })] },
 };
 
-// Commands with subcommands: `anote skill install` and `anote skill path`.
-// Neither touches the graph.
+// Commands with subcommands. `skill install` and `skill path` never touch the
+// graph. `publish mark` and `publish unmark` write one note; `publish preview`
+// only reads.
 const GROUPS: Record<string, Record<string, Command>> = {
   skill: {
     install: { run: cmdSkillInstall, spec: [val("--agent", { choices: AGENTS }), val("--dir"), flag("--force")] },
     path: { run: cmdSkillPath, spec: [] },
+  },
+  publish: {
+    mark: { run: cmdPublishMark, spec: [pos("note")] },
+    unmark: { run: cmdPublishUnmark, spec: [pos("note")] },
+    preview: { run: cmdPublishPreview, spec: [] },
   },
 };
 

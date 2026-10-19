@@ -3,6 +3,11 @@ import type { Args } from "../args.ts";
 import { Fail } from "../util.ts";
 import { LINK_TYPES, SOURCES, STANCES, WIKILINK, checkType } from "../schema.ts";
 import { getNote, graphDir, incoming, loadAll } from "../store.ts";
+import type { Notes } from "../store.ts";
+import {
+  MAX_BODY, MAX_HUB_TITLE, MAX_LINK_NOTE, bytes, connectionNote, hashDrifted, isMarked, unpublishedMentions,
+  urlKey, urlProblem,
+} from "../publish.ts";
 import { cmp, padEnd, parseDate, slugify } from "../util.ts";
 import { emit } from "./types.ts";
 
@@ -11,6 +16,51 @@ interface Issue {
   level: Level;
   note: string;
   message: string;
+}
+
+/**
+ * Publishing errors (G3 to G10). Only a graph with at least one marked note
+ * gets them; a graph with none is checked exactly as before.
+ */
+function publishErrors(notes: Notes): Array<[string, string]> {
+  const marked = [...notes].filter(([, n]) => isMarked(n));
+  if (marked.length === 0) return [];
+  const out: Array<[string, string]> = [];
+  const byUrl = new Map<string, string[]>();
+  for (const [s, n] of marked) {
+    const err = (m: string) => out.push([s, m]);
+    if (n.kind === "person") {
+      err("a person note is marked published; person notes are never published (G8)");
+      continue;
+    }
+    if (hashDrifted(n)) err("changed since `anote publish mark`; mark it again or unmark it (G4)");
+    const url = n.meta["url"];
+    if (n.kind !== "hub") {
+      if (!url) err("marked published but has no url (G9)");
+      else {
+        const p = urlProblem(url);
+        if (p) err(`marked published but ${p} (G9)`);
+        if (n.status === "active") byUrl.set(urlKey(url), [...(byUrl.get(urlKey(url)) ?? []), s]);
+      }
+    } else if (bytes(n.title) > MAX_HUB_TITLE) {
+      err(`hub title is over ${MAX_HUB_TITLE} bytes (G10)`);
+    }
+    if (bytes(n.body) > MAX_BODY) err(`body is over ${MAX_BODY} bytes (G10)`);
+    for (const m of unpublishedMentions(notes, n.body)) err(`body mentions unpublished note [[${m}]] (G5)`);
+    if (n.kind === "hub") continue;
+    for (const l of n.links) {
+      const t = notes.get(l.to);
+      if (!t || !isMarked(t) || t.kind === "hub" || t.kind === "person") continue; // never exported
+      const text = connectionNote(l.type, l.note);
+      if (bytes(text) > MAX_LINK_NOTE) err(`note on link to ${l.to} is over ${MAX_LINK_NOTE} bytes (G10)`);
+      for (const m of unpublishedMentions(notes, text)) err(`note on link to ${l.to} mentions unpublished note [[${m}]] (G5)`);
+    }
+  }
+  for (const slugs of byUrl.values()) {
+    if (slugs.length < 2) continue;
+    for (const s of slugs) out.push([s, `url is also on marked note(s) ${slugs.filter((x) => x !== s).join(", ")}; one published note per url (G9)`]);
+  }
+  return out;
 }
 
 export function cmdCheck(a: Args): number {
@@ -68,6 +118,8 @@ export function cmdCheck(a: Args): number {
     if (n.status === "active" && !n.meta["review"]) add("warn", s, "no review date");
     if (n.status === "active" && n.links.length === 0 && !inc.get(s)) add("info", s, "no links in or out");
   }
+
+  for (const [s, message] of publishErrors(notes)) add("error", s, message);
 
   const order: Record<Level, number> = { error: 0, warn: 1, info: 2 };
   issues.sort((x, y) => order[x.level] - order[y.level] || cmp(x.note, y.note)); // stable
