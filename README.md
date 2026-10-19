@@ -256,6 +256,12 @@ not include it.
 ## Limits
 
 - Search is keyword scoring, not semantic search. It finds the words you used.
+  Equal scores list the newest first.
+- anote does not detect contradictions itself. When a fact changes, the agent
+  promotes the old and new log lines and runs `anote supersede`; search and
+  `anote show DATE` then mark the old log line with its replacement. The marker
+  follows promote trails by line number, so a log hand-edited after a promote
+  can put it on the wrong line.
 - There is no sync, locking or history. Put the graph in git if you want those.
 - Concurrent writers are not coordinated. Writes are atomic per file, but two
   processes editing the same note can still overwrite each other.
