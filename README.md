@@ -252,6 +252,16 @@ npm test            # node:test, runs the real CLI against temp directories
 npm run typecheck   # tsc --noEmit, strict
 ```
 
+## Releasing
+
+1. Bump `version` in `package.json` on `main`.
+2. Push a tag `v` + that version, for example `git tag v0.3.1 && git push origin v0.3.1`.
+   The `publish` workflow (`.github/workflows/publish.yml`) checks the tag matches
+   the version and is on `main`, runs `npm ci` and `npm run check`, then runs
+   `npm stage publish` through npm Trusted Publishing. No token is stored.
+3. The version is now staged, not public. A maintainer opens Staged Packages on
+   npmjs.com, checks it, and approves it with 2FA (or rejects it).
+
 ## License
 
 MIT. See `LICENSE`.
