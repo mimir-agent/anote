@@ -1,0 +1,69 @@
+# Stages a release of @mimir-agent/anote on npm when a v* tag is pushed.
+# Auth is npm Trusted Publishing (OIDC): no token or secret is stored anywhere.
+# The file name publish.yml is registered on npmjs.com; renaming it breaks publishing.
+# The staged version stays private until a maintainer approves it with 2FA.
+name: publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out (full history, to check the tag is on main)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Check npm version (staged publishing needs npm >= 11.15.0)
+        run: |
+          at_least() { node -e 'const [a,b]=process.argv.slice(1).map(v=>v.split(".").map(Number));for(let i=0;i<3;i++){if(a[i]!==b[i])process.exit(a[i]>b[i]?0:1)}' "$1" "11.15.0"; }
+          if ! at_least "$(npm --version)"; then
+            echo "npm $(npm --version) is below 11.15.0; installing npm@11"
+            npm install -g npm@11
+          fi
+          if ! at_least "$(npm --version)"; then
+            echo "::error::npm $(npm --version) is below 11.15.0, which staged publishing needs"
+            exit 1
+          fi
+          echo "npm $(npm --version)"
+
+      - name: Check tag matches package.json version
+        run: |
+          expected="v$(node -p 'require("./package.json").version')"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version (expected $expected)"
+            exit 1
+          fi
+
+      - name: Check tagged commit is on main
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tagged commit $GITHUB_SHA is not reachable from origin/main"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and test
+        run: npm run check
+
+      # prepack builds dist/. Provenance is generated automatically under trusted publishing.
+      - name: Stage on npm
+        run: npm stage publish
