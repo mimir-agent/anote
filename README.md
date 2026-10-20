@@ -202,6 +202,7 @@ optionally following one type. Assertions link to the question they answer with
 | `publish mark NOTE` | mark one note for publishing (see Publishing) |
 | `publish unmark NOTE` | clear that mark |
 | `publish preview` | print the records an export would write, and what is left out |
+| `publish send` | dry run: what a send to your own repo would create, update or leave alone |
 
 A note can be named by slug, by exact title, or by a unique slug prefix.
 Dates accept `YYYY-MM-DD`, `+30d`, `+6w` or `+3m`.
@@ -216,8 +217,9 @@ A note can carry the page it is about: `anote add ... --url URL` or
 have one.
 
 anote can work out which records a note would become as Semble cards, but it
-sends nothing: there is no export command yet, and these commands open no
-network connection. `publish preview` also writes no file.
+sends nothing yet. `publish mark`, `publish unmark` and `publish preview` open
+no network connection, and `publish preview` writes no file. `publish send` is
+a dry run that only reads (see below).
 
 - Nothing is published by default. Only `anote publish mark NOTE` sets
   `published: yes`, and only `anote publish unmark NOTE` clears it; `set`
@@ -242,6 +244,63 @@ network connection. `publish preview` also writes no file.
   a hub title over 100. A graph with no marked notes is checked as before.
 - Unmarking or superseding a marked note only stops future exports. It warns
   that copies already sent may persist.
+
+### Dry run: publish send
+
+`anote publish send [--json]` shows what a send would do. In this version it
+is only a dry run: it makes GET requests, reads no secret and writes nothing.
+`--write` is not available yet.
+
+A send writes records to your own AT Protocol repository on your PDS. They are
+public as soon as they are written. Anyone can read them, and relays and
+indexers may keep copies; anote cannot take them back.
+
+The account goes in `$ANOTE_PUBLISH_CONFIG`, or `~/.config/anote/publish.json`
+when that is unset, with exactly these three keys (invented example):
+
+```json
+{"handle": "alice.example.com", "did": "did:plc:abcdefghijklmnopqrstuvwx", "pds": "https://pds.example.com"}
+```
+
+Secrets never go in this file; a key named like a password, secret, token or
+key is refused. `pds` must be a public https address with no path or port, and
+`did` must be a `did:plc`. Before reading any records, `send` checks that the
+handle resolves to that did and that the DID document names that pds; any
+mismatch stops it (exit 2).
+
+`send` first runs the same publishing checks as `anote check` and stops if any
+fail. Then it reads the account's own `network.cosmik.*` records and prints:
+
+- the graph path and the account;
+- every record, as create, update or unchanged. A record is matched to one
+  already in the repo by its url (URL cards), its parent card (NOTE cards), its
+  source, target and type (connections), its name (collections), or its
+  collection and card (collection links). When a URL card changes, its NOTE card
+  and collection links are updated too, because they point at it;
+- the full text of every NOTE card, connection note and collection description
+  it would create or update;
+- records already in the repo that no marked note produces, under "left alone
+  (anote never deletes)", with their AT URIs. anote never deletes. Unmarking a
+  note stops future sends only; the records already written stay, and `send`
+  lists them there. A renamed hub or a link whose type changed becomes a new
+  record, and the old one is left alone too;
+- every note, link and daily log left out, and why;
+- the number of writes and a 12-character confirmation hash of the exact
+  writes, the account and the graph. A later `--write` will refuse unless the
+  hash still matches.
+
+A run with no graph change since the last send plans no writes. More than 50
+writes in one run is refused (`--max N` sets a lower cap), as is a collection
+holding more than 1000 records, and two records in the repo with the same
+identity (anote does not pick one). `--password`, `--token`, `--did`, `--pds`
+and `--delete` are refused outright.
+
+Read the dry run, including the full note text, before confirming. It is the
+last check before something becomes public.
+
+The records use Semble's record types (`network.cosmik.*`). anote does not talk
+to Semble. Whether Semble, or any other app, shows or indexes them is up to that
+app, and has not been tested.
 
 ## File format
 
