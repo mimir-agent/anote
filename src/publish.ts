@@ -87,7 +87,7 @@ function privateV4(a: number, b: number): boolean {
 }
 
 /** Why a host is not public (G9), or null. `host` is URL.hostname. */
-function hostProblem(hostRaw: string): string | null {
+export function hostProblem(hostRaw: string): string | null {
   const host = hostRaw.replace(/\.$/, "");
   if (host === "localhost" || host.endsWith(".localhost")) return "localhost";
   if (host.endsWith(".local")) return "a .local name";

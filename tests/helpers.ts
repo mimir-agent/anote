@@ -56,4 +56,35 @@ export function useCtx(): Ctx {
   return ctx;
 }
 
+/** The sourdough graph from the publish spec, with the reference, fragment and hub marked. */
+export function sourdough(c: Ctx): void {
+  c.add("Sourdough hydration ratios", [
+    "--type", "reference", "--url", "https://example.org/hydration", "--body", "Water to flour, by weight.",
+  ]);
+  c.add("Autolyse before salt", [
+    "--type", "fragment", "--url", "https://example.org/autolyse", "--body", "Rest flour and water first.",
+  ]);
+  c.run(["link", "autolyse-before-salt", "expands-on", "sourdough-hydration-ratios", "--note", "the rest step"]);
+  c.add("Wetter dough opens the crumb", ["--type", "assertion", "--body", "More water, bigger holes."]);
+  c.add("Baking basics", [
+    "--type", "hub", "--body", "Where to start.",
+    "--link", "relates:sourdough-hydration-ratios", "--link", "relates:autolyse-before-salt",
+  ]);
+  c.add("Ada Baker", ["--type", "person", "--person-ok", "--url", "https://example.org/ada"]);
+  assert.equal(c.run(["log", "fed the starter"]).code, 0);
+  for (const s of ["sourdough-hydration-ratios", "autolyse-before-salt", "baking-basics"]) {
+    const r = c.run(["publish", "mark", s]);
+    assert.equal(r.code, 0, r.err);
+  }
+}
+
+/** Every file under a directory with its contents, to prove nothing was written. */
+export function snapshot(dir: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const e of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
+    if (e.isFile()) out[path.join(e.parentPath, e.name)] = fs.readFileSync(path.join(e.parentPath, e.name), "utf8");
+  }
+  return out;
+}
+
 export { assert };
