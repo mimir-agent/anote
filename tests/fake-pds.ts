@@ -1,6 +1,7 @@
 // A fake PDS for `publish send` tests, and a guard that fails any real request.
 // Every host here is invented (.example and .test names). The PLC directory url
 // is the only real name: the fake answers it, so it is never contacted.
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import type { HttpRequest, HttpResponse, Json, Transport } from "../src/send.ts";
@@ -28,6 +29,20 @@ export interface FakeState {
   pageSize?: number;
   /** Answer the first `times` listRecords calls with this status. */
   failList?: { status: number; times: number };
+  /** The app password createSession accepts (a sentinel), the token it hands out, and the did it signs in as. */
+  password?: string;
+  accessJwt?: string;
+  sessionDid?: string;
+  /** Answer createSession with this status and server error code. */
+  failSession?: { status: number; error: string };
+  /**
+   * Fail putRecord calls number `nth` to `nth + times - 1` (counting every
+   * attempt, retries too): with `status` and `error`, or by dropping the
+   * connection when `drop` is set.
+   */
+  failPut?: { nth: number; times: number; status?: number; error?: string; drop?: boolean; headers?: Record<string, string> };
+  /** Treat every swapRecord as stale (InvalidSwap). */
+  staleSwaps?: boolean;
 }
 
 /** A DID document naming `pds` as the account's PDS. */
@@ -55,19 +70,73 @@ export interface Logged {
   url: string;
   /** "fake" for a request the fake answered, "real" for one the guard caught. */
   via: "fake" | "real";
+  /** putRecord: the request body. createSession: the identifier only (the fake never logs a password). */
+  body?: Json;
+  /** Whether the request carried `Bearer <the fake's token>`. */
+  authed?: boolean;
 }
 
-const json = (status: number, body: unknown): HttpResponse => ({
-  status, body: JSON.stringify(body), headers: { "content-type": "application/json" },
+/** Invented sentinels, JWT-shaped like a real access token. */
+export const SENTINEL_PASSWORD = "sentinel-app-password-not-real";
+export const SENTINEL_JWT = "eyJzZW50aW5lbC1oZWFkZXI.eyJzZW50aW5lbC1ub3QtcmVhbCJ9.c2VudGluZWwtc2lnbmF0dXJl";
+
+const json = (status: number, body: unknown, headers: Record<string, string> = {}): HttpResponse => ({
+  status, body: JSON.stringify(body), headers: { "content-type": "application/json", ...headers },
 });
+
+/** A content-addressed stand-in for a cid: the same record always gets the same one. */
+function fakeCid(record: Json): string {
+  return "bafyfake" + createHash("sha256").update(JSON.stringify(record)).digest("hex").slice(0, 24);
+}
 
 /** The fake transport. Records every request (to `log`) before answering it. */
 export function fakeTransport(state: FakeState, log: (l: Logged) => void): Transport {
   let listCalls = 0;
+  let putCalls = 0;
+  const jwt = state.accessJwt ?? SENTINEL_JWT;
   return async (req: HttpRequest) => {
+    const u = new URL(req.url);
+    if (req.method === "POST") {
+      const body = JSON.parse(req.body ?? "null") as Record<string, Json>;
+      const authed = req.headers?.["authorization"] === `Bearer ${jwt}`;
+      if (u.origin === state.pds && u.pathname === "/xrpc/com.atproto.server.createSession") {
+        log({ method: "POST", url: req.url, via: "fake", body: { identifier: body["identifier"] ?? null } });
+        // Error bodies echo the secret and token on purpose: anote must never print a server message.
+        if (state.failSession) return json(state.failSession.status, { error: state.failSession.error, message: `${body["password"]} ${jwt}` });
+        if (body["identifier"] !== state.repo || body["password"] !== (state.password ?? SENTINEL_PASSWORD)) {
+          return json(401, { error: "AuthenticationRequired", message: `Invalid identifier or password ${String(body["password"])}` });
+        }
+        return json(200, { did: state.sessionDid ?? state.repo, handle: "alice.example.com", accessJwt: jwt, refreshJwt: jwt + "r", active: true });
+      }
+      if (u.origin === state.pds && u.pathname === "/xrpc/com.atproto.repo.putRecord") {
+        log({ method: "POST", url: req.url, via: "fake", body: body as Json, authed });
+        putCalls++;
+        const f = state.failPut;
+        if (f && putCalls >= f.nth && putCalls < f.nth + f.times) {
+          if (f.drop) throw new Error(`connection dropped (${jwt})`);
+          return json(f.status ?? 500, { error: f.error ?? "InternalServerError", message: `${jwt} ${state.password ?? SENTINEL_PASSWORD}` }, f.headers);
+        }
+        if (!authed) return json(401, { error: "AuthenticationRequired" });
+        const collection = String(body["collection"]);
+        if (body["repo"] !== state.repo) return json(400, { error: "InvalidRequest" });
+        const uri = `at://${state.repo}/${collection}/${String(body["rkey"])}`;
+        const list = (state.records[collection] ??= []);
+        const at = list.findIndex((r) => r.uri === uri);
+        const swap = body["swapRecord"];
+        if (swap !== undefined && swap !== null && (state.staleSwaps || at < 0 || list[at]?.cid !== swap)) {
+          return json(400, { error: "InvalidSwap", message: `Record was at ${list[at]?.cid ?? "nothing"}` });
+        }
+        const cid = fakeCid(body["record"] ?? null);
+        const stored = { uri, cid, value: body["record"] ?? null };
+        if (at >= 0) list[at] = stored;
+        else list.push(stored);
+        return json(200, { uri, cid, validationStatus: "unknown" });
+      }
+      log({ method: "POST", url: req.url, via: "fake" });
+      return json(400, { error: "UnexpectedRequest" });
+    }
     log({ method: req.method, url: req.url, via: "fake" });
     if (req.method !== "GET") return json(405, { error: "MethodNotAllowed" });
-    const u = new URL(req.url);
     if (u.pathname === "/.well-known/atproto-did") {
       const body = state.wellKnown[u.hostname];
       return body === undefined ? { status: 404, body: "", headers: {} } : { status: 200, body, headers: {} };

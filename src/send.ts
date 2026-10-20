@@ -113,8 +113,11 @@ export function readConfig(file: string): Account {
 // --------------------------------------------------------------- transport
 
 export interface HttpRequest {
-  method: "GET";
+  method: "GET" | "POST";
   url: string;
+  /** JSON text, POST only. */
+  body?: string;
+  headers?: Record<string, string>;
 }
 export interface HttpResponse {
   status: number;
@@ -127,7 +130,10 @@ export type Transport = (req: HttpRequest) => Promise<HttpResponse>;
 
 /** The real transport: fetch, no redirects, 15 second timeout. */
 export const fetchTransport: Transport = async (req) => {
-  const r = await fetch(req.url, { method: req.method, redirect: "error", signal: AbortSignal.timeout(15_000) });
+  const init: RequestInit = { method: req.method, redirect: "error", signal: AbortSignal.timeout(15_000) };
+  if (req.headers) init.headers = req.headers;
+  if (req.body !== undefined) init.body = req.body;
+  const r = await fetch(req.url, init);
   const headers: Record<string, string> = {};
   r.headers.forEach((v, k) => {
     headers[k] = v;
@@ -136,13 +142,13 @@ export const fetchTransport: Transport = async (req) => {
 };
 
 /** scheme, host and path of a url, without the query. */
-function endpoint(url: string): string {
+export function endpoint(url: string): string {
   const u = new URL(url);
   return u.origin + u.pathname;
 }
 
 /** The server's error code from an XRPC error body, if it is a plain word. */
-function serverCode(r: HttpResponse): string {
+export function serverCode(r: HttpResponse): string {
   try {
     const e = (JSON.parse(r.body) as { error?: unknown }).error;
     return typeof e === "string" && /^[A-Za-z0-9]{1,64}$/.test(e) ? ` ${e}` : "";
@@ -151,11 +157,15 @@ function serverCode(r: HttpResponse): string {
   }
 }
 
-function httpFailure(what: string, url: string, r: HttpResponse): never {
-  const reset = r.status === 429 && /^\d{1,12}$/.test(r.headers["ratelimit-reset"] ?? "")
+/** " (rate limit resets at ...)" for a 429 that says when, else "". */
+export function rateReset(r: HttpResponse): string {
+  return r.status === 429 && /^\d{1,12}$/.test(r.headers["ratelimit-reset"] ?? "")
     ? ` (rate limit resets at ${new Date(Number(r.headers["ratelimit-reset"]) * 1000).toISOString()})`
     : "";
-  die(1, `${what}: GET ${endpoint(url)}: HTTP ${r.status}${serverCode(r)}${reset}`);
+}
+
+function httpFailure(what: string, url: string, r: HttpResponse): never {
+  die(1, `${what}: GET ${endpoint(url)}: HTTP ${r.status}${serverCode(r)}${rateReset(r)}`);
 }
 
 /** GET with one retry on a network error, a timeout or a 5xx; never on a 4xx. */
@@ -279,6 +289,8 @@ export type Action = "create" | "update" | "unchanged";
 export interface Ref {
   uri: string | null;
   cid: string | null;
+  /** Index of the record pointed to, in write order. */
+  index: number;
 }
 
 export interface Planned {
@@ -286,6 +298,14 @@ export interface Planned {
   action: Action;
   /** The remote record this updates or leaves unchanged; null for a create. */
   uri: string | null;
+  /** That remote record's cid as listed: the swapRecord of an update. Null for a create. */
+  cid: string | null;
+  /** Strong-ref fields of the value, each naming the index (in write order) of the record it points to. */
+  refs: Record<string, number>;
+  /** Fields the remote record has that an update would drop (dotted paths, timestamps aside). */
+  drops: string[];
+  /** Timestamps an update keeps from the remote record (createdAt, addedAt). */
+  kept: JsonObject;
   /** What makes two records the same record (see the spec's identity rules). */
   identity: Record<string, string | null>;
   /** The record value without timestamps (they are set at write time). */
@@ -320,6 +340,20 @@ function withoutRefCids(v: JsonObject, refs: string[]): JsonObject {
   for (const k of refs) {
     const r = out[k];
     if (r && typeof r === "object" && !Array.isArray(r)) out[k] = { ...r, cid: null };
+  }
+  return out;
+}
+
+/** Dotted paths of fields in `remote` that `next` does not have (an update would drop them). */
+function dropped(remote: JsonObject, next: JsonObject, at = ""): string[] {
+  const out: string[] = [];
+  for (const k of Object.keys(remote).sort()) {
+    const r = remote[k];
+    const n = next[k];
+    if (n === undefined) out.push(at + k);
+    else if (r && typeof r === "object" && !Array.isArray(r) && n && typeof n === "object" && !Array.isArray(n)) {
+      out.push(...dropped(r, n, `${at}${k}.`));
+    }
   }
   return out;
 }
@@ -399,7 +433,8 @@ export function matchPlan(plan: Plan, remote: RemoteRecord[], did: string): Matc
   const plannedKeys = new Set<string>();
   const records: Planned[] = [];
 
-  const place = (collection: CollectionName, key: string | null, identity: Record<string, string | null>, value: JsonObject, refs: string[]): Planned => {
+  const place = (collection: CollectionName, key: string | null, identity: Record<string, string | null>, value: JsonObject, to: Record<string, Ref>): Planned => {
+    const refs = Object.keys(to);
     let found: RemoteRecord | null = null;
     if (key !== null) {
       const full = `${collection} ${key}`;
@@ -422,15 +457,22 @@ export function matchPlan(plan: Plan, remote: RemoteRecord[], did: string): Matc
         cascade = canonical(withoutRefCids(remoteValue, refs)) === canonical(withoutRefCids(value, refs));
       }
     }
-    const p: Planned = { collection, action, uri: found?.uri ?? null, identity, value, cascade };
+    const kept: JsonObject = {};
+    for (const k of ["createdAt", "addedAt"]) {
+      const t = found?.value[k];
+      if (typeof t === "string") kept[k] = t;
+    }
+    const p: Planned = {
+      collection, action, uri: found?.uri ?? null, cid: found?.cid ?? null,
+      refs: Object.fromEntries(Object.entries(to).map(([k, r]) => [k, r.index])),
+      drops: found && action === "update" ? dropped(withoutTimestamps(found.value), value) : [],
+      kept, identity, value, cascade,
+    };
     records.push(p);
     return p;
   };
-  /** The strong ref a later record uses to point at `p`. */
-  const refOf = (p: Planned): Ref => {
-    const hit = p.uri === null ? null : remote.find((r) => r.uri === p.uri) ?? null;
-    return { uri: p.uri, cid: p.action === "unchanged" && hit ? hit.cid : null };
-  };
+  /** The strong ref a later record uses to point at `p`: the listed cid only while `p` stays unchanged. */
+  const refOf = (p: Planned): Ref => ({ uri: p.uri, cid: p.action === "unchanged" ? p.cid : null, index: records.indexOf(p) });
 
   const urlCards = new Map<string, Ref>();
   for (const c of plan.cards) {
@@ -440,7 +482,7 @@ export function matchPlan(plan: Plan, remote: RemoteRecord[], did: string): Matc
       type: "URL",
       content: { $type: `${CARD}#urlContent`, url: c.url, metadata: { $type: `${CARD}#urlMetadata`, title: c.metadata.title } },
     };
-    const p = place(CARD, JSON.stringify(["URL", urlKey(c.url)]), { url: c.url }, value, []);
+    const p = place(CARD, JSON.stringify(["URL", urlKey(c.url)]), { url: c.url }, value, {});
     urlCards.set(urlKey(c.url), refOf(p));
   }
   for (const c of plan.cards) {
@@ -454,13 +496,13 @@ export function matchPlan(plan: Plan, remote: RemoteRecord[], did: string): Matc
       parentCard: { uri: parent.uri, cid: parent.cid },
     };
     const key = parent.uri === null ? null : JSON.stringify(["NOTE", parent.uri]);
-    place(CARD, key, { parentCard: parent.uri, url: c.parentCard.url }, value, ["parentCard"]);
+    place(CARD, key, { parentCard: parent.uri, url: c.parentCard.url }, value, { parentCard: parent });
   }
   for (const c of plan.connections) {
     const value: JsonObject = { $type: CONNECTION, source: c.source, target: c.target, connectionType: c.connectionType };
     if (c.note !== undefined) value["note"] = c.note;
     const key = JSON.stringify([urlKey(c.source), urlKey(c.target), c.connectionType]);
-    place(CONNECTION, key, { source: c.source, target: c.target, connectionType: c.connectionType }, value, []);
+    place(CONNECTION, key, { source: c.source, target: c.target, connectionType: c.connectionType }, value, {});
   }
   const links: Array<{ collection: Ref; name: string; card: Ref; url: string }> = [];
   for (const c of plan.collections) {
@@ -468,7 +510,7 @@ export function matchPlan(plan: Plan, remote: RemoteRecord[], did: string): Matc
     if (c.description !== undefined) value["description"] = c.description;
     value["accessType"] = c.accessType;
     value["collaborators"] = [];
-    const p = place(COLLECTION, JSON.stringify([c.name]), { name: c.name }, value, []);
+    const p = place(COLLECTION, JSON.stringify([c.name]), { name: c.name }, value, {});
     for (const m of c.memberships) links.push({ collection: refOf(p), name: c.name, card: urlCards.get(urlKey(m.card)) as Ref, url: m.card });
   }
   for (const l of links) {
@@ -479,7 +521,8 @@ export function matchPlan(plan: Plan, remote: RemoteRecord[], did: string): Matc
       addedBy: did,
     };
     const key = l.collection.uri === null || l.card.uri === null ? null : JSON.stringify([l.collection.uri, l.card.uri]);
-    place(COLLECTION_LINK, key, { collection: l.collection.uri, card: l.card.uri, collectionName: l.name, cardUrl: l.url }, value, ["collection", "card"]);
+    place(COLLECTION_LINK, key, { collection: l.collection.uri, card: l.card.uri, collectionName: l.name, cardUrl: l.url }, value,
+      { collection: l.collection, card: l.card });
   }
   const left_alone = remote.filter((r) => !used.has(r.uri)).map((r) => ({ collection: r.collection, uri: r.uri, what: describeRemote(r) }));
   return { records, left_alone };
@@ -489,15 +532,19 @@ export function matchPlan(plan: Plan, remote: RemoteRecord[], did: string): Matc
 
 /**
  * The confirmation hash: the first 12 hex of sha256 over the canonical JSON of
- * the ordered planned writes (collection, action, rkey or "new", identity, full
- * value without timestamps), the config did and the graph path. Any change in
- * graph text, remote state, account or graph gives a different hash.
+ * the ordered planned writes (collection, action, rkey or "new", the listed cid
+ * of the record an update replaces, identity, full value without timestamps),
+ * the config did and the graph path. Any change in the planned writes, in the
+ * records they replace, in the account or in the graph gives a different hash.
+ * The write uses that same listed cid as swapRecord, so a record edited in the
+ * repo after the dry run is refused by the server rather than overwritten.
  */
 export function confirmationHash(records: Planned[], did: string, graph: string): string {
   const writes = records.filter((r) => r.action !== "unchanged").map((r) => ({
     collection: r.collection,
     action: r.action,
     rkey: r.uri === null ? "new" : r.uri.slice(r.uri.lastIndexOf("/") + 1),
+    replaces: r.action === "update" ? r.cid : null,
     identity: r.identity,
     value: r.value,
   }));

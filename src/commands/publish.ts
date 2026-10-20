@@ -8,7 +8,7 @@ import { getNote, graphDir, loadAll, mdFiles, resolve, save, touch } from "../st
 import type { Notes } from "../store.ts";
 import { die, print, printErr } from "../util.ts";
 import {
-  MARKED, buildPlan, bytes, contentHash, isMarked, urlProblem, urlTakenBy,
+  MARKED, buildPlan, bytes, contentHash, isMarked, typeProblem, urlProblem, urlTakenBy,
 } from "../publish.ts";
 import type { LeftOut } from "../publish.ts";
 import { emit } from "./types.ts";
@@ -27,6 +27,8 @@ export function cmdPublishMark(a: Args): void {
   const n = getNote(notes, s);
   const no = `cannot mark ${s}:`;
   if (n.kind === "person") die(2, `${no} person notes are never published (G3)`);
+  const tp = typeProblem(n);
+  if (tp !== null) die(2, `${no} its type does not check (${tp}); fix the type first (G8)`);
   if (n.status !== "active") die(2, `${no} it is ${n.status}; only active notes are published`);
   if (n.kind !== "hub") {
     const url = n.meta["url"];
