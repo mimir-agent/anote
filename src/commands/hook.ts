@@ -44,12 +44,21 @@ function readIfExists(file: string): string | undefined {
   }
 }
 
-/** Write through a temp file and rename. A symlinked file is written at its target, keeping its mode. */
+/**
+ * Write through a temp file and rename. A symlinked file is written at its target, keeping its mode.
+ * The temp file is created exclusively, so anything already at its path (a link included) fails with EEXIST
+ * and is left alone.
+ */
 function writeAtomic(file: string, text: string, mode: number): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = path.join(path.dirname(file), `.${path.basename(file)}.tmp-${process.pid}`);
+  const fd = fs.openSync(tmp, "wx", mode);
   try {
-    fs.writeFileSync(tmp, text, { mode });
+    try {
+      fs.writeFileSync(fd, text);
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.chmodSync(tmp, mode);
     fs.renameSync(tmp, file);
   } catch (e) {
@@ -132,8 +141,15 @@ export function cmdHookClaude(a: Args): number {
       hooks["SessionStart"] = start;
       data["hooks"] = hooks;
     }
+    // The backup path may sit in a cloned repo, so never write through whatever is there: refuse
+    // anything but a regular file, remove an old backup, and create the new one exclusively.
+    const old = fs.lstatSync(backup, { throwIfNoEntry: false });
+    if (old && !old.isFile()) {
+      return refuse(`${backup} is not a regular file (a symlink or folder, for example); remove it and run this again. ${untouched}`);
+    }
     const target = fs.realpathSync(settings);
-    fs.copyFileSync(settings, backup);
+    if (old) fs.unlinkSync(backup);
+    fs.copyFileSync(target, backup, fs.constants.COPYFILE_EXCL);
     writeAtomic(target, JSON.stringify(data, null, 2) + "\n", fs.statSync(target).mode & 0o7777);
     const action = existing ? "replaced" : "added";
     report(action, `${existing ? "replaced the anote brief hook in" : "added the hook to"} ${settings}\nbackup: ${backup}`, true);
