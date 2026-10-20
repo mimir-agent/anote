@@ -134,6 +134,43 @@ describe("hook claude: --write", () => {
     assert.equal(fs.readFileSync(backupPath(), "utf8"), "{}\n");
   });
 
+  it("a symlinked backup path is refused: its target and the settings stay byte-identical", () => {
+    const victim = path.join(tmp, "victim-rc.sh");
+    fs.writeFileSync(victim, "export SAFE=1\n");
+    writeSettings(EXISTING_TEXT);
+    fs.symlinkSync(victim, backupPath());
+    for (const extra of [[], ["--force"]]) {
+      const r = run(["--write", ...extra]);
+      assert.equal(r.code, 1);
+      assert.equal(r.out, "");
+      assert.match(r.err, /is not a regular file/);
+      assert.ok(r.err.includes(backupPath()), r.err);
+      assert.match(r.err, /Nothing written/);
+      assert.equal(fs.readFileSync(victim, "utf8"), "export SAFE=1\n");
+      assert.equal(fs.readFileSync(settingsPath(), "utf8"), EXISTING_TEXT);
+      assert.equal(fs.readlinkSync(backupPath()), victim);
+      assert.deepEqual(fs.readdirSync(path.join(home, ".claude")).sort(), ["settings.json", "settings.json.anote-backup"]);
+    }
+  });
+
+  it("a directory at the backup path is refused", () => {
+    writeSettings(EXISTING_TEXT);
+    fs.mkdirSync(backupPath());
+    const r = run(["--write"]);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /is not a regular file/);
+    assert.equal(fs.readFileSync(settingsPath(), "utf8"), EXISTING_TEXT);
+    assert.deepEqual(fs.readdirSync(backupPath()), []);
+  });
+
+  it("an old regular backup file is replaced with the current settings", () => {
+    writeSettings(EXISTING_TEXT);
+    fs.writeFileSync(backupPath(), "old backup\n");
+    const r = run(["--write"]);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(fs.readFileSync(backupPath(), "utf8"), EXISTING_TEXT);
+  });
+
   it("the file mode is kept", () => {
     writeSettings("{}\n");
     fs.chmodSync(settingsPath(), 0o600);
