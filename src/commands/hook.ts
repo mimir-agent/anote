@@ -1,6 +1,6 @@
-// hook claude: print, or add to a Claude Code settings file, a SessionStart
-// hook that runs `anote brief`. Only checks that the graph exists; never reads,
-// creates or locks it.
+// hook claude and hook codex: print, or add to an agent's settings or hooks
+// file, a SessionStart hook that runs `anote brief`. Only checks that the graph
+// exists; never reads, creates or locks it.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -9,9 +9,6 @@ import { MIN_BUDGET } from "./brief.ts";
 import { graphDir } from "../store.ts";
 import { die, expandPath, printErr } from "../util.ts";
 import { emit } from "./types.ts";
-
-// Claude Code adds at most this many characters of hook output to the context.
-const MAX_BUDGET = 10_000;
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type Obj = { [key: string]: Json };
@@ -77,10 +74,29 @@ function writeAtomic(file: string, text: string, mode: number): void {
   }
 }
 
-export function cmdHookClaude(a: Args): number {
+/** What differs between the agents a hook is written for. */
+interface Agent {
+  /** The subcommand: `anote hook NAME`. */
+  name: string;
+  /** The largest --budget whose brief the agent shows whole. */
+  maxBudget: number;
+  /** The file used when --settings is not given. */
+  defaultFile: () => string;
+}
+
+// Claude Code adds at most 10,000 characters of hook output to the context.
+const CLAUDE: Agent = {
+  name: "claude",
+  maxBudget: 10_000,
+  defaultFile: () => path.join(os.homedir(), ".claude", "settings.json"),
+};
+
+export const cmdHookClaude = (a: Args): number => hook(a, CLAUDE);
+
+function hook(a: Args, agent: Agent): number {
   const budget = a.num("budget");
-  if (budget < MIN_BUDGET || budget > MAX_BUDGET) {
-    die(2, `--budget must be between ${MIN_BUDGET} and ${MAX_BUDGET} characters, got ${budget}`);
+  if (budget < MIN_BUDGET || budget > agent.maxBudget) {
+    die(2, `--budget must be between ${MIN_BUDGET} and ${agent.maxBudget} characters, got ${budget}`);
   }
   const graph = path.resolve(graphDir(a.str("graph")));
   const command = `${shellQuote(ANOTE)} brief --budget ${budget} --graph ${shellQuote(graph)}`;
@@ -88,7 +104,7 @@ export function cmdHookClaude(a: Args): number {
     printErr(`warning: no graph at ${graph} yet; the hook will report an error until you run anote init`);
   }
   const raw = a.str("settings");
-  const settings = raw === undefined ? path.join(os.homedir(), ".claude", "settings.json") : path.resolve(expandPath(raw));
+  const settings = raw === undefined ? agent.defaultFile() : path.resolve(expandPath(raw));
   const backup = settings + ".anote-backup";
   const handler: Obj = { type: "command", command };
   const block: Obj = { hooks: { SessionStart: [{ hooks: [handler] }] } };
@@ -101,7 +117,7 @@ export function cmdHookClaude(a: Args): number {
   };
 
   if (!a.flag("write")) {
-    report("printed", `${JSON.stringify(block, null, 2)}\nThis goes in ${settings}; run \`anote hook claude --write\` to add it there.`);
+    report("printed", `${JSON.stringify(block, null, 2)}\nThis goes in ${settings}; run \`anote hook ${agent.name} --write\` to add it there.`);
     return 0;
   }
 
@@ -118,7 +134,7 @@ export function cmdHookClaude(a: Args): number {
       data = JSON.parse(text) as Json;
     } catch (e) {
       return refuse(
-        `${settings} is not valid JSON (${(e as Error).message}). A file with comments or trailing commas (JSONC) counts as not valid here; add the hook by hand (see \`anote hook claude\`). ${untouched}`,
+        `${settings} is not valid JSON (${(e as Error).message}). A file with comments or trailing commas (JSONC) counts as not valid here; add the hook by hand (see \`anote hook ${agent.name}\`). ${untouched}`,
       );
     }
     if (!isObj(data)) return refuse(`${settings} is not a JSON object. ${untouched}`);
