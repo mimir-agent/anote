@@ -9,7 +9,10 @@ anote keeps notes for an agent that persists across sessions. Notes are
 markdown files. Each one records its type, who said it, what it was true for,
 and when to check it again, and notes connect through typed links.
 
-Install with `npm i -g @mimir-agent/anote`, then `anote skill install --agent hermes|claude`.
+Install anote (see the README; the npm release may be older than this skill),
+then copy this file into your agent with `anote skill install --agent hermes`,
+`--agent claude`, or `--dir DIR`. It never touches the graph, and replaces a
+different copy only with `--force`.
 
 New to the tool? Run `anote --help` and `anote types`. The graph lives in
 `$ANOTE_GRAPH`, or `~/.hermes/graph` if that is unset.
@@ -17,6 +20,14 @@ New to the tool? Run `anote --help` and `anote types`. The graph lives in
 At the start of a session, run `anote brief --budget N` (N in characters,
 roughly 4 per token) to see the notes due for review and the newest log lines.
 If a brief was already printed at session start, read it before running brief again.
+If brief says `no graph at PATH`, the graph is missing or the path is wrong; do
+not read that as an empty graph.
+
+In Claude Code, `anote hook claude` prints a SessionStart hook that runs brief
+by anote's absolute path with the graph path fixed. `--write` adds it to
+`~/.claude/settings.json` (or `--settings FILE`) after copying the file to
+`FILE.anote-backup`. Only add it when the person you work for asks; to remove
+it, delete that hook entry or restore the backup.
 
 ## The rule that matters most: log first
 
@@ -96,3 +107,14 @@ tokens or passwords. Do not write person notes about anyone except the people
 you work for unless they will be referenced often and the facts are ones they
 would be fine with recorded. Person notes need `--person-ok`. Otherwise write
 the name as plain text in the log.
+
+## Publishing
+
+A note may carry the page it is about: `--url URL` on add, or
+`anote set NOTE url URL`. Nothing is published by default. Only the person you
+work for decides what becomes public: do not run `anote publish mark` or
+`anote publish send --write` unless they asked for that note. Person notes and
+daily logs can never be marked, and links to unmarked notes are never exported.
+`anote publish preview` and `anote publish send` (without `--write`) only show
+what would be sent; show that output to the person before anything is written.
+Records written by `send --write` are public and anote cannot take them back.

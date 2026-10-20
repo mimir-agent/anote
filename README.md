@@ -33,7 +33,10 @@ ln -s "$PWD/anote" ~/.local/bin/anote   # or any directory on your PATH
 anote init
 ```
 
-npm has the latest published release; `main` may be ahead of it.
+npm has the latest published release; `main` may be ahead of it. The newest
+release on npm is 0.2.1, which predates `brief`, `skill`, `hook`, the `url`
+field, `publish` and the `(due)` search marker. Until a later release is
+published, install from source to use them.
 
 Publishing needs `npm ci` first, because `prepack` builds `dist/` with the dev dependencies.
 
@@ -97,6 +100,9 @@ log lines:
 (3 more left out)
 ```
 
+With no graph at the path, brief prints `anote: no graph at PATH (run anote
+init)` to stderr and exits 1, instead of printing an empty brief.
+
 ### Claude Code: brief at every session start
 
 Claude Code can run a command when a session starts (startup, resume, `/clear`
@@ -109,6 +115,38 @@ anote hook claude --write    # add it to ~/.claude/settings.json
 anote hook claude --write --settings .claude/settings.json   # a project's settings
 ```
 
+Without `--write` it prints the block it would add (the home, install and
+graph paths below stand in for yours):
+
+```sh
+$ anote hook claude
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/path/to/anote' brief --budget 2000 --graph '/path/to/graph'"
+          }
+        ]
+      }
+    ]
+  }
+}
+This goes in /home/you/.claude/settings.json; run `anote hook claude --write` to add it there.
+```
+
+With `--write` on an existing file:
+
+```sh
+$ anote hook claude --write
+added the hook to /home/you/.claude/settings.json
+backup: /home/you/.claude/settings.json.anote-backup
+$ anote hook claude --write
+unchanged: /home/you/.claude/settings.json already has this hook
+```
+
 The hook runs `'/abs/path/to/anote' brief --budget 2000 --graph '/abs/path/to/graph'`. The
 graph path is fixed when you run the command (from `--graph`, `$ANOTE_GRAPH` or
 `~/.hermes/graph`), because the hook's shell may not have `ANOTE_GRAPH` set.
@@ -116,18 +154,30 @@ graph path is fixed when you run the command (from `--graph`, `$ANOTE_GRAPH` or
 at most 10,000 characters of hook output).
 
 `--write` creates the settings file if it is missing. Otherwise it first copies
-the file to `settings.json.anote-backup`, then adds one hook and keeps every
-other setting. Running it again changes nothing. If a different `anote brief`
-hook is already there, it is only replaced with `--force`. A file that is not
+the file to `settings.json.anote-backup` (replacing an older backup), then adds
+one hook and keeps every other setting. The file is written back as JSON
+indented with two spaces, so its formatting may change. Running it again
+changes nothing. If a different `anote brief` hook is already there, it is
+only replaced with `--force`. A file that is not
 plain JSON (comments count) is refused and left as it was.
 
 The hook names anote by the absolute path of the copy that wrote it (the repo's
 `anote` launcher, or `bin/anote.js` in an npm install), so it works when Claude
 Code's hook shell does not have anote on its PATH. If you move that copy, run
 `anote hook claude --write --force` again. A hook written by an older anote
-with the bare word `anote` is replaced only with `--force`. To remove the
-hook, delete its entry under `hooks.SessionStart` in the settings file, or
-restore the `.anote-backup` copy.
+with the bare word `anote` is replaced only with `--force`.
+
+`hook claude` never reads or creates the graph and does not run brief. If no
+graph exists at the path yet, it still prints or writes the hook and warns on
+stderr that the hook will report an error until you run `anote init`.
+
+There is no remove command. To remove the hook, delete the object whose
+`command` contains `brief --budget` from `hooks.SessionStart` in the settings
+file (and the `SessionStart` entry around it if nothing else is left in it),
+or restore the `.anote-backup` copy. The backup is the file as it was before
+the most recent `--write` that changed it, so restoring it also undoes any
+other edit made to the settings since. When `--write` created the file, there
+is no backup.
 
 ## Note types
 
@@ -180,7 +230,19 @@ referenced often. Anyone else is written as plain text in the log.
 `--version` records what the note was true for, such as a software version.
 `anote stale` lists notes whose review date has arrived. `anote confirm` marks a
 note re-checked and pushes the date out. `anote search` marks the same notes
-with `(due)` on their hit line, so a past-review note is not read as current.
+with `(due)` on their hit line, so a past-review note is not read as current
+(`--json` output has no marker; it carries each hit's `review` date instead):
+
+```sh
+$ anote search starter --budget 300
+sourdough-starter-guide  "Sourdough starter guide"  [observed, 2026-10-19]
+    Feed the starter twice a day at room temperature.
+a-starter-doubles-in-four-to-six-hours  "A starter doubles in four to six hours" (due)  [observed, 2026-10-19]
+    Measured over a week at 22C.
+daily/2026-10-19  "2026-10-19"  [log, 2026-10-19]
+    # 2026-10-19 - 22:04 [observed] the starter rose faster after moving it near the oven
+```
+
 When a claim is wrong, `anote supersede OLD NEW` retires the old note instead
 of overwriting it. Superseded notes drop out of search and lists, and stay on
 disk with a pointer to their replacement.
@@ -256,6 +318,61 @@ types, and send them to your own repository. `publish mark`, `publish unmark`
 and `publish preview` open no network connection, and `publish preview` writes
 no file. `publish send` is a dry run that only reads, unless `--write` is given
 with its confirmation hash (see below).
+
+The guarantees, in short:
+
+- Nothing is published unless you mark the note and then run
+  `publish send --write` and confirm its hash. No other command sends anything.
+- Person notes and daily logs can never be marked or sent.
+- A link to or from a note that is not marked is never exported, and neither
+  is a `[[mention]]` of one: `check` and `send` stop on it.
+- The records use Semble's record types, but nothing here promises that Semble
+  or any other app will display them.
+
+A worked example in a graph with two notes that have urls, one linked to the
+other, a concept with no url linked to one of them, a person note, and a log
+line (all invented):
+
+```sh
+$ anote publish mark sourdough-starter-guide
+marked sourdough-starter-guide for publishing
+$ anote publish mark a-starter-doubles-in-four-to-six-hours
+marked a-starter-doubles-in-four-to-six-hours for publishing
+$ anote publish mark sam-example
+anote: cannot mark sam-example: person notes are never published (G3)
+$ anote publish mark kitchen-scratch-list
+anote: cannot mark kitchen-scratch-list: it has no url; set one with `anote set kitchen-scratch-list url URL` (G9)
+$ anote publish mark 2026-10-19
+anote: cannot publish 2026-10-19: daily logs are never published (G3)
+$ anote publish preview
+preview only: nothing is sent and no file is written
+
+cards (4):
+  URL   https://example.org/starter-timing  "A starter doubles in four to six hours"
+  NOTE  on https://example.org/starter-timing  (28 bytes)
+  URL   https://example.com/starter-guide  "Sourdough starter guide"
+  NOTE  on https://example.com/starter-guide  (49 bytes)
+
+connections (1):
+  https://example.org/starter-timing -> https://example.com/starter-guide  RELATED  | [expands-on] 
+
+collections (0):
+
+left out (4):
+  note kitchen-scratch-list: no url
+  note sam-example: person
+  link kitchen-scratch-list relates sourdough-starter-guide: unpublished source
+  log 2026-10-19: log
+```
+
+The three refusals exit 2. `set` will not change the mark either:
+
+```sh
+$ anote set sourdough-starter-guide published no
+anote: published is changed only by `anote publish mark` and `anote publish unmark`
+```
+
+The rules in full:
 
 - Nothing is published by default. Only `anote publish mark NOTE` sets
   `published: yes`, and only `anote publish unmark NOTE` clears it; `set`
@@ -423,15 +540,25 @@ anote skill install --agent claude   # ~/.claude/skills
 anote skill install --dir DIR        # any other agent: writes DIR/anote/SKILL.md
 ```
 
-An identical file is left alone, a different one is only replaced with `--force`,
-and if the agent already has another skill named anote, nothing is written.
+It prints the path it wrote, and says so when there was nothing to do:
+
+```sh
+$ anote skill install --agent claude
+/home/you/.claude/skills/anote/SKILL.md
+$ anote skill install --agent claude
+already up to date: /home/you/.claude/skills/anote/SKILL.md
+```
+
+It never touches the graph. An identical file is left alone, a different one is
+only replaced with `--force`, and if the agent already has another skill named
+anote, nothing is written.
 `anote skill path` prints where the bundled file is. The same file is on GitHub:
 [skills/anote/SKILL.md](https://github.com/mimir-agent/anote/blob/main/skills/anote/SKILL.md).
 
 The `skill` command is on `main` and not yet in a release on npm. Until a
 release published after it is, use it from source. v0.3.0 is tagged but not
-published, and that tag predates the `skill` command, so a publish from it will
-not include it.
+published, and that tag predates the `skill`, `hook` and `publish` commands,
+so a publish from it will not include them.
 
 ## Limits
 
