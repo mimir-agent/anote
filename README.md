@@ -202,7 +202,7 @@ optionally following one type. Assertions link to the question they answer with
 | `publish mark NOTE` | mark one note for publishing (see Publishing) |
 | `publish unmark NOTE` | clear that mark |
 | `publish preview` | print the records an export would write, and what is left out |
-| `publish send` | dry run: what a send to your own repo would create, update or leave alone |
+| `publish send` | dry run: what a send to your own repo would create, update or leave alone; `--write` sends |
 
 A note can be named by slug, by exact title, or by a unique slug prefix.
 Dates accept `YYYY-MM-DD`, `+30d`, `+6w` or `+3m`.
@@ -216,10 +216,11 @@ A note can carry the page it is about: `anote add ... --url URL` or
 `anote set NOTE url URL` (`none` clears it). Any note type in any graph may
 have one.
 
-anote can work out which records a note would become as Semble cards, but it
-sends nothing yet. `publish mark`, `publish unmark` and `publish preview` open
-no network connection, and `publish preview` writes no file. `publish send` is
-a dry run that only reads (see below).
+anote can work out which records a note would become, using Semble's record
+types, and send them to your own repository. `publish mark`, `publish unmark`
+and `publish preview` open no network connection, and `publish preview` writes
+no file. `publish send` is a dry run that only reads, unless `--write` is given
+with its confirmation hash (see below).
 
 - Nothing is published by default. Only `anote publish mark NOTE` sets
   `published: yes`, and only `anote publish unmark NOTE` clears it; `set`
@@ -239,21 +240,24 @@ a dry run that only reads (see below).
 - `publish preview [--json]` lists the cards, connections and collections, then
   every note, link and daily log left out and why.
 - In a graph with at least one marked note, `check` also errors on a marked
-  person note, hash drift, `[[mentions]]` of unmarked notes in a marked body or
-  link note, duplicate urls, a body over 10000 bytes, a link note over 1000 and
-  a hub title over 100. A graph with no marked notes is checked as before.
+  person note, hash drift, `[[mentions]]` (also `[[slug|alias]]`) of unmarked
+  notes in a marked title, body or link note, a url on a single-label host,
+  duplicate urls, a body over 10000 bytes, a link note over 1000, a hub title
+  over 100, and control or bidi characters (which can hide text on screen) in
+  a marked title, body, url or link note. A graph with no marked notes is
+  checked as before.
 - Unmarking or superseding a marked note only stops future exports. It warns
   that copies already sent may persist.
 
-### Dry run: publish send
+### publish send
 
-`anote publish send [--json]` shows what a send would do. In this version it
+`anote publish send [--json]` shows what a send would do. Without `--write` it
 is only a dry run: it makes GET requests, reads no secret and writes nothing.
-`--write` is not available yet.
+`anote publish send --write` sends (see "Sending" below).
 
-A send writes records to your own AT Protocol repository on your PDS. They are
-public as soon as they are written. Anyone can read them, and relays and
-indexers may keep copies; anote cannot take them back.
+`send --write` writes records to your own AT Protocol repository on your PDS.
+They are public as soon as they are written. Anyone can read them, and relays
+and indexers may keep copies; anote cannot take them back.
 
 The account goes in `$ANOTE_PUBLISH_CONFIG`, or `~/.config/anote/publish.json`
 when that is unset, with exactly these three keys (invented example):
@@ -286,17 +290,60 @@ fail. Then it reads the account's own `network.cosmik.*` records and prints:
   record, and the old one is left alone too;
 - every note, link and daily log left out, and why;
 - the number of writes and a 12-character confirmation hash of the exact
-  writes, the account and the graph. A later `--write` will refuse unless the
-  hash still matches.
+  writes, the records they replace, the account and the graph. `--write`
+  refuses unless the hash still matches.
+
+An update keeps the record and its `createdAt`. If the copy in the repo has
+fields anote does not write (say a description Semble added to a URL card), the
+dry run lists them under "drops fields the repo copy has", because the update
+replaces the record with what the note says.
 
 A run with no graph change since the last send plans no writes. More than 50
 writes in one run is refused (`--max N` sets a lower cap), as is a collection
 holding more than 1000 records, and two records in the repo with the same
 identity (anote does not pick one). `--password`, `--token`, `--did`, `--pds`
-and `--delete` are refused outright.
+and `--delete` are refused outright, and so is any unknown option, without
+showing its value.
 
 Read the dry run, including the full note text, before confirming. It is the
 last check before something becomes public.
+
+#### Sending
+
+Create an app password in your PDS account settings and export it as
+`ANOTE_PUBLISH_APP_PASSWORD`.
+
+`anote publish send --write --confirm HASH` sends, where HASH is the
+confirmation hash the dry run printed. On a terminal, `--confirm` can be left
+off: `send --write` prints the dry run and asks you to type the hash; anything
+else aborts. Without a terminal, `--confirm` is required.
+
+- `--write` works everything out again from the graph and the repo, never from
+  a saved dry run. If the hash differs, it stops with "plan changed since the
+  dry run; run it again and read it" and sends nothing.
+- With nothing to send it says "nothing to send" and reads no password.
+- Only then does it read `ANOTE_PUBLISH_APP_PASSWORD` (unset or empty stops it,
+  exit 2), and signs in once. The account it signs in as must be the config
+  `did`. The password and the session are kept in memory for that run only and
+  are never written or printed.
+- It checks once more that every record comes from an active, marked note that
+  is not a person note or a log and that passes the publish checks, and stops
+  the whole run if one does not.
+- It writes one record per request with `com.atproto.repo.putRecord`, only to
+  the four `network.cosmik.*` collections and only to the config `did`'s repo:
+  URL cards, then NOTE cards, connections, collections and collection links.
+  New records get new keys; an update keeps the record's key and is refused by
+  the server if the record changed since this run read it. anote never deletes.
+- A failed request (network error or 5xx, after one retry; any 4xx; a 429 rate
+  limit) stops the run with exit 1, naming the endpoint, the HTTP status, the
+  server's error code, the first record that failed and the records already
+  written. Run `send` again to finish: records already written are found in the
+  repo and not repeated.
+- Each write is logged, one JSON line per attempt, to
+  `$XDG_STATE_HOME/anote/publish-log.jsonl` (else
+  `~/.local/state/anote/publish-log.jsonl`), mode 600: time, did, collection,
+  AT URI, cid, action and a sha256 of the note's slug. No text, titles, urls or
+  credentials. Nothing reads it back; losing it loses nothing.
 
 The records use Semble's record types (`network.cosmik.*`). anote does not talk
 to Semble. Whether Semble, or any other app, shows or indexes them is up to that
