@@ -1,5 +1,6 @@
 // hook claude: print, or add to a Claude Code settings file, a SessionStart
-// hook that runs `anote brief`. Never reads, creates or locks the graph.
+// hook that runs `anote brief`. Only checks that the graph exists; never reads,
+// creates or locks it.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -74,6 +75,9 @@ export function cmdHookClaude(a: Args): number {
   }
   const graph = path.resolve(graphDir(a.str("graph")));
   const command = `anote brief --budget ${budget} --graph ${shellQuote(graph)}`;
+  if (!fs.statSync(graph, { throwIfNoEntry: false })?.isDirectory()) {
+    printErr(`warning: no graph at ${graph} yet; the hook will report an error until you run anote init`);
+  }
   const raw = a.str("settings");
   const settings = raw === undefined ? path.join(os.homedir(), ".claude", "settings.json") : path.resolve(expandPath(raw));
   const backup = settings + ".anote-backup";

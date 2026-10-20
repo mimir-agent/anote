@@ -286,8 +286,40 @@ describe("hook claude: --write", () => {
     fs.writeFileSync(path.join(home, ".claude"), "");
     const r = run(["--write"]);
     assert.equal(r.code, 1);
-    assert.match(r.err, /^anote: ENOTDIR: /);
+    // The missing-graph warning comes first; the OS error is on its own line.
+    assert.match(r.err, /^anote: ENOTDIR: /m);
     assert.equal(fs.readFileSync(path.join(home, ".claude"), "utf8"), "");
+  });
+});
+
+describe("hook claude: missing graph", () => {
+  const warning = (g = graph): string =>
+    `warning: no graph at ${g} yet; the hook will report an error until you run anote init\n`;
+  const printed = (g: string): string =>
+    `${JSON.stringify(block(command(2000, g)), null, 2)}\nThis goes in ${settingsPath()}; run \`anote hook claude --write\` to add it there.\n`;
+
+  it("print: warns on stderr, still prints the hook, exit 0", () => {
+    const r = run([]);
+    assert.equal(r.code, 0);
+    assert.equal(r.err, warning());
+    assert.equal(r.out, printed(graph));
+  });
+
+  it("--write: warns on stderr, still writes the settings file, exit 0", () => {
+    const r = run(["--write"]);
+    assert.equal(r.code, 0);
+    assert.equal(r.err, warning());
+    assert.equal(r.out, `created ${settingsPath()}\n`);
+    assert.deepEqual(readJson(settingsPath()), block(command()));
+  });
+
+  it("an existing graph: no warning, the same output as before", () => {
+    const g = path.join(tmp, "real-graph");
+    fs.mkdirSync(g);
+    const r = run(["--graph", g]);
+    assert.equal(r.code, 0);
+    assert.equal(r.err, "");
+    assert.equal(r.out, printed(g));
   });
 });
 
