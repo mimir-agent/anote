@@ -602,7 +602,8 @@ so a publish from it will not include them.
 ## Limits
 
 - Search is keyword scoring, not semantic search. It finds the words you used.
-  Equal scores list the newest first.
+  Equal scores list the newest first. A daily log hit shows its best-matching
+  line and that line's number, for `anote promote`.
 - anote does not detect contradictions itself. When a fact changes, the agent
   promotes the old and new log lines and runs `anote supersede`; search and
   `anote show DATE` then mark the old log line with its replacement. The marker

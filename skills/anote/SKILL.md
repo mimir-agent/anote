@@ -95,9 +95,10 @@ worth a note, log the correction and name the old date: "Alex moved to
 Lisbon; corrects the 2026-10-01 log".
 
 Read cheaply: `anote search WORDS --budget 300`, `anote show NOTE`, and
-`anote neighbors NOTE --depth 2`. A search hit marked `(due)` is past its
-review date: re-check it before relying on it, then `anote confirm NOTE` (or
-supersede it). Run `anote stale --within 14d` to see what
+`anote neighbors NOTE --depth 2`. A daily log hit shows its best line as
+`line N: ...`, the N that `anote promote DATE N` takes. A search hit marked
+`(due)` is past its review date: re-check it before relying on it, then
+`anote confirm NOTE` (or supersede it). Run `anote stale --within 14d` to see what
 needs checking, and `anote check` after a batch of edits.
 
 ## Privacy
