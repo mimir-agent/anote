@@ -2,7 +2,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Args } from "../args.ts";
-import { graphDir, incoming, loadAll, mdFiles } from "../store.ts";
+import { dailyBullets, graphDir, incoming, loadAll, mdFiles } from "../store.ts";
 import { marker, supersededLog, type SupersededLine } from "../superseded.ts";
 import { cmp, cpLen, padEnd, parseDate, print, readText, slugify, today, words } from "../util.ts";
 import { emit } from "./types.ts";
@@ -18,6 +18,8 @@ interface Doc {
   updated: string;
   status: string;
   review: string;
+  /** Daily logs only: the "- " log lines, the list `anote promote` numbers. */
+  bullets?: string[];
 }
 
 /** Count non-overlapping occurrences of `needle` (Python str.count). */
@@ -50,6 +52,31 @@ function snippet(body: string, toks: string[], width = 140): string {
   const start = Math.max(0, pos - 40);
   const chunk = flat.slice(start, start + width);
   return (start > 0 ? "..." : "") + chunk + (start + width < flat.length ? "..." : "");
+}
+
+/** A daily hit's snippet: the log line with the most distinct query words, and its number. */
+interface LineSnippet {
+  line: number;
+  snippet: string;
+}
+
+/**
+ * The log line holding the most distinct query words, ties to the latest line,
+ * as "line N: TEXT" (TEXT cut by the snippet window rule past `width` characters).
+ * Undefined when no log line holds any query word.
+ */
+function bestLine(bullets: string[], toks: string[], width = 140): LineSnippet | undefined {
+  const distinct = [...new Set(toks)];
+  let best: { line: number; text: string; hits: number } | undefined;
+  for (const [i, b] of bullets.entries()) {
+    const text = b.slice(2);
+    const low = text.toLowerCase();
+    const hits = distinct.filter((k) => low.includes(k)).length;
+    if (hits > 0 && (best === undefined || hits >= best.hits)) best = { line: i + 1, text, hits };
+  }
+  if (best === undefined) return undefined;
+  const text = best.text.length > width ? snippet(best.text, toks, width) : best.text;
+  return { line: best.line, snippet: `line ${best.line}: ${text}` };
 }
 
 /**
@@ -87,9 +114,10 @@ export function cmdSearch(a: Args): void {
   if (fs.existsSync(dd) && fs.statSync(dd).isDirectory() && !typeFlag) {
     for (const f of mdFiles(dd)) {
       const stem = f.slice(0, -3);
+      const file = path.join(dd, f);
       docs.push({
-        slug: "daily/" + stem, title: stem, tags: [], body: readText(path.join(dd, f)), kind: "daily",
-        source: "log", updated: stem, status: "active", review: "",
+        slug: "daily/" + stem, title: stem, tags: [], body: readText(file), kind: "daily",
+        source: "log", updated: stem, status: "active", review: "", bullets: dailyBullets(file),
       });
     }
   }
@@ -101,12 +129,19 @@ export function cmdSearch(a: Args): void {
   const limit = a.num("limit");
   const budget = a.num("budget");
   const now = today();
-  const results: Array<Doc & { score: number; snippet: string; superseded: SupersededLine[]; due: string }> = [];
+  const results: Array<
+    Doc & { score: number; snippet: string; superseded: SupersededLine[]; due: string; line?: number }
+  > = [];
   let used = 0;
   for (const { sc, d } of ranked) {
     if (sc <= 0 || results.length >= limit) break;
     const superseded = d.kind === "daily" ? (marked.get(d.title) ?? []) : [];
-    const r = { ...d, score: sc, snippet: snippet(d.body, toks), superseded, due: dueFlag(d, now) };
+    // A daily hit shows its best log line; with no matching log line it keeps the body window.
+    const best = d.bullets === undefined ? undefined : bestLine(d.bullets, toks);
+    const r = {
+      ...d, score: sc, snippet: best?.snippet ?? snippet(d.body, toks), superseded, due: dueFlag(d, now),
+      line: best?.line,
+    };
     const marks = markerLines(r.superseded).reduce((n, l) => n + cpLen(l) + 1, 0);
     const cost = Math.floor((cpLen(r.slug) + cpLen(r.title) + cpLen(r.snippet) + marks + cpLen(r.due) + 30) / 4);
     if (budget && results.length > 0 && used + cost > budget) break;
@@ -114,7 +149,8 @@ export function cmdSearch(a: Args): void {
     results.push(r);
   }
   if (a.flag("json")) {
-    // Same keys and order as the original, minus the body, then superseded last.
+    // Same keys and order as the original, minus the body, then superseded, then
+    // line for a daily hit whose snippet is a log line.
     const rows = results.map((r) => {
       const row: Record<string, unknown> = {
         slug: r.slug, title: r.title, tags: r.tags, kind: r.kind,
@@ -124,6 +160,7 @@ export function cmdSearch(a: Args): void {
         source: r.source, updated: r.updated, status: r.status, review: r.review,
         score: r.score, snippet: r.snippet, superseded: r.superseded,
       });
+      if (r.line !== undefined) row["line"] = r.line;
       return row;
     });
     emit(a, rows, "");

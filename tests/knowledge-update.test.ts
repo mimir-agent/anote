@@ -69,6 +69,7 @@ describe("knowledge update", () => {
     const day = rows.find((r: { slug: string }) => r.slug === "daily/2026-10-01");
     assert.deepEqual(Object.keys(day), [
       "slug", "title", "tags", "kind", "source", "updated", "status", "review", "score", "snippet", "superseded",
+      "line",
     ]);
     assert.deepEqual(day.superseded, [{ line: 1, note: "alex-is-in-berlin", by: "alex-is-in-lisbon" }]);
     const note = JSON.parse(ok(c, ["search", "Lisbon", "--json"]))

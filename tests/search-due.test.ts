@@ -63,8 +63,9 @@ const ORDER_ALL_MAIN = [
 const NOTE_KEYS_MAIN = [
   "slug", "title", "tags", "kind", "type", "source", "updated", "status", "review", "score", "snippet", "superseded",
 ];
+// A daily row whose snippet is a log line also carries "line", last.
 const DAILY_KEYS_MAIN = [
-  "slug", "title", "tags", "kind", "source", "updated", "status", "review", "score", "snippet", "superseded",
+  "slug", "title", "tags", "kind", "source", "updated", "status", "review", "score", "snippet", "superseded", "line",
 ];
 
 describe("search: (due) marker", () => {
