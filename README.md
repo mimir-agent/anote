@@ -97,6 +97,34 @@ log lines:
 (3 more left out)
 ```
 
+### Claude Code: brief at every session start
+
+Claude Code can run a command when a session starts (startup, resume, `/clear`
+and compaction) and add what it prints to the context. `anote hook claude`
+prints that hook, and `--write` adds it to your settings:
+
+```sh
+anote hook claude            # print the hook and the file it goes in; writes nothing
+anote hook claude --write    # add it to ~/.claude/settings.json
+anote hook claude --write --settings .claude/settings.json   # a project's settings
+```
+
+The hook runs `anote brief --budget 2000 --graph '/abs/path/to/graph'`. The
+graph path is fixed when you run the command (from `--graph`, `$ANOTE_GRAPH` or
+`~/.hermes/graph`), because the hook's shell may not have `ANOTE_GRAPH` set.
+`--budget` sets brief's budget, from 200 to 10000 characters (Claude Code adds
+at most 10,000 characters of hook output).
+
+`--write` creates the settings file if it is missing. Otherwise it first copies
+the file to `settings.json.anote-backup`, then adds one hook and keeps every
+other setting. Running it again changes nothing. If a different `anote brief`
+hook is already there, it is only replaced with `--force`. A file that is not
+plain JSON (comments count) is refused and left as it was.
+
+`anote` must be on the PATH that Claude Code's hook shell sees. To remove the
+hook, delete its entry under `hooks.SessionStart` in the settings file, or
+restore the `.anote-backup` copy.
+
 ## Note types
 
 A note has exactly one type. The set is fixed, and `anote types` prints it.
@@ -199,6 +227,7 @@ optionally following one type. Assertions link to the question they answer with
 | `brief` | due notes, then recent log lines, cut to `--budget` characters (default 2000) |
 | `skill install` | copy the bundled skill into `--agent hermes`, `--agent claude` or `--dir DIR` |
 | `skill path` | print where the bundled skill file is |
+| `hook claude` | print, or add with `--write`, a Claude Code hook that runs brief at session start |
 | `publish mark NOTE` | mark one note for publishing (see Publishing) |
 | `publish unmark NOTE` | clear that mark |
 | `publish preview` | print the records an export would write, and what is left out |

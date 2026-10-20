@@ -12,6 +12,7 @@ import { cmdCheck } from "./commands/check.ts";
 import { cmdAdd, cmdLog, cmdPromote } from "./commands/create.ts";
 import { cmdAppend, cmdConfirm, cmdSet, cmdStale, cmdSupersede } from "./commands/edit.ts";
 import { cmdList, cmdSearch } from "./commands/find.ts";
+import { cmdHookClaude } from "./commands/hook.ts";
 import { cmdLink, cmdNeighbors, cmdUnlink } from "./commands/links.ts";
 import { cmdPublishMark, cmdPublishPreview, cmdPublishUnmark } from "./commands/publish.ts";
 import { REFUSED, cmdPublishSend } from "./commands/send.ts";
@@ -113,6 +114,13 @@ const GROUPS: Record<string, Record<string, Command>> = {
   skill: {
     install: { run: cmdSkillInstall, spec: [val("--agent", { choices: AGENTS }), val("--dir"), flag("--force")] },
     path: { run: cmdSkillPath, spec: [] },
+  },
+  // `hook claude` writes only the Claude Code settings file it names; never the graph.
+  hook: {
+    claude: {
+      run: cmdHookClaude,
+      spec: [val("--budget", { int: true, default: 2000 }), flag("--write"), val("--settings"), flag("--force")],
+    },
   },
   publish: {
     mark: { run: cmdPublishMark, spec: [pos("note")] },
