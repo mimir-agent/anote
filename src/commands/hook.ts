@@ -1,6 +1,6 @@
-// hook claude: print, or add to a Claude Code settings file, a SessionStart
-// hook that runs `anote brief`. Only checks that the graph exists; never reads,
-// creates or locks it.
+// hook claude and hook codex: print, or add to an agent's settings or hooks
+// file, a SessionStart hook that runs `anote brief`. Only checks that the graph
+// exists; never reads, creates or locks it.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -9,9 +9,6 @@ import { MIN_BUDGET } from "./brief.ts";
 import { graphDir } from "../store.ts";
 import { die, expandPath, printErr } from "../util.ts";
 import { emit } from "./types.ts";
-
-// Claude Code adds at most this many characters of hook output to the context.
-const MAX_BUDGET = 10_000;
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type Obj = { [key: string]: Json };
@@ -77,10 +74,52 @@ function writeAtomic(file: string, text: string, mode: number): void {
   }
 }
 
-export function cmdHookClaude(a: Args): number {
+/** What differs between the agents a hook is written for. */
+interface Agent {
+  /** The subcommand: `anote hook NAME`. */
+  name: string;
+  /** The largest --budget whose brief the agent shows whole. */
+  maxBudget: number;
+  /** The file used when --settings is not given. */
+  defaultFile: () => string;
+  /** A last line after the hook is printed or written (stderr with --json); not after "unchanged". */
+  notice?: string;
+  /**
+   * Refuse a settings path that is a symlink, before reading it. A cloned repo's hooks file could
+   * link to a credential file, which --write would rewrite and copy into the repo as the backup.
+   */
+  refuseSymlink?: boolean;
+}
+
+// Claude Code adds at most 10,000 characters of hook output to the context.
+const CLAUDE: Agent = {
+  name: "claude",
+  maxBudget: 10_000,
+  defaultFile: () => path.join(os.homedir(), ".claude", "settings.json"),
+};
+
+// Codex spills hook output over about 2,500 tokens to a file and shows the model only a preview;
+// 8,000 characters keeps brief whole at about 4 characters per token. Codex keeps the user's hooks
+// file in CODEX_HOME when that is set.
+const CODEX: Agent = {
+  name: "codex",
+  maxBudget: 8_000,
+  defaultFile: () => {
+    const home = process.env["CODEX_HOME"];
+    return path.join(home ? path.resolve(expandPath(home)) : path.join(os.homedir(), ".codex"), "hooks.json");
+  },
+  notice:
+    "Codex runs this hook only after you trust it: open /hooks in Codex and approve it. Project hooks also need the project's .codex folder to be trusted.",
+  refuseSymlink: true,
+};
+
+export const cmdHookClaude = (a: Args): number => hook(a, CLAUDE);
+export const cmdHookCodex = (a: Args): number => hook(a, CODEX);
+
+function hook(a: Args, agent: Agent): number {
   const budget = a.num("budget");
-  if (budget < MIN_BUDGET || budget > MAX_BUDGET) {
-    die(2, `--budget must be between ${MIN_BUDGET} and ${MAX_BUDGET} characters, got ${budget}`);
+  if (budget < MIN_BUDGET || budget > agent.maxBudget) {
+    die(2, `--budget must be between ${MIN_BUDGET} and ${agent.maxBudget} characters, got ${budget}`);
   }
   const graph = path.resolve(graphDir(a.str("graph")));
   const command = `${shellQuote(ANOTE)} brief --budget ${budget} --graph ${shellQuote(graph)}`;
@@ -88,12 +127,15 @@ export function cmdHookClaude(a: Args): number {
     printErr(`warning: no graph at ${graph} yet; the hook will report an error until you run anote init`);
   }
   const raw = a.str("settings");
-  const settings = raw === undefined ? path.join(os.homedir(), ".claude", "settings.json") : path.resolve(expandPath(raw));
+  const settings = raw === undefined ? agent.defaultFile() : path.resolve(expandPath(raw));
   const backup = settings + ".anote-backup";
   const handler: Obj = { type: "command", command };
   const block: Obj = { hooks: { SessionStart: [{ hooks: [handler] }] } };
-  const report = (action: string, text: string, withBackup = false): void =>
-    emit(a, { action, settings, command, ...(withBackup ? { backup } : {}) }, text);
+  const report = (action: string, text: string, withBackup = false): void => {
+    const notice = action === "unchanged" || action === "refused" ? undefined : agent.notice;
+    emit(a, { action, settings, command, ...(withBackup ? { backup } : {}) }, notice === undefined ? text : `${text}\n${notice}`);
+    if (notice !== undefined && a.flag("json")) printErr(notice);
+  };
   const refuse = (msg: string): number => {
     if (a.flag("json")) report("refused", "");
     printErr(`anote: ${msg}`);
@@ -101,11 +143,14 @@ export function cmdHookClaude(a: Args): number {
   };
 
   if (!a.flag("write")) {
-    report("printed", `${JSON.stringify(block, null, 2)}\nThis goes in ${settings}; run \`anote hook claude --write\` to add it there.`);
+    report("printed", `${JSON.stringify(block, null, 2)}\nThis goes in ${settings}; run \`anote hook ${agent.name} --write\` to add it there.`);
     return 0;
   }
 
   try {
+    if (agent.refuseSymlink && fs.lstatSync(settings, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      return refuse(`${settings} is a symlink; pass the file it points to with --settings. Nothing written to ${settings}.`);
+    }
     const text = readIfExists(settings);
     if (text === undefined) {
       writeAtomic(settings, JSON.stringify(block, null, 2) + "\n", 0o644);
@@ -118,7 +163,7 @@ export function cmdHookClaude(a: Args): number {
       data = JSON.parse(text) as Json;
     } catch (e) {
       return refuse(
-        `${settings} is not valid JSON (${(e as Error).message}). A file with comments or trailing commas (JSONC) counts as not valid here; add the hook by hand (see \`anote hook claude\`). ${untouched}`,
+        `${settings} is not valid JSON (${(e as Error).message}). A file with comments or trailing commas (JSONC) counts as not valid here; add the hook by hand (see \`anote hook ${agent.name}\`). ${untouched}`,
       );
     }
     if (!isObj(data)) return refuse(`${settings} is not a JSON object. ${untouched}`);

@@ -179,6 +179,44 @@ the most recent `--write` that changed it, so restoring it also undoes any
 other edit made to the settings since. When `--write` created the file, there
 is no backup.
 
+### Codex CLI: brief at every session start
+
+Codex can also run a command when a session starts (startup, resume, clear,
+compact and fork) and add what it prints to the context. `anote hook codex`
+works like `hook claude`, with the same flags, output and refusals, but writes
+to Codex's hooks file:
+
+```sh
+anote hook codex             # print the hook and the file it goes in; writes nothing
+anote hook codex --write     # add it to ~/.codex/hooks.json ($CODEX_HOME/hooks.json if set)
+anote hook codex --write --settings .codex/hooks.json   # a project's hooks
+```
+
+Codex runs a new hook only after you trust it. After printing or writing the
+hook, anote reminds you: open `/hooks` in Codex and approve it. A project's
+hooks also need the project's `.codex` folder to be trusted.
+
+`--budget` goes from 200 to 8000 characters here (default 2000). Codex moves
+hook output over roughly 2,500 tokens to a file and shows the model only the
+start and end of it, so 8000 characters (about 4 per token, an estimate)
+keeps the brief whole.
+
+`hook codex` reads and writes only the hooks file it names and its
+`.anote-backup`. It never touches `config.toml`, `auth.json` or anything else
+under `~/.codex`, and never runs codex or brief. A hooks file that is a symlink
+is refused with nothing written, because a cloned repo's `.codex/hooks.json`
+could link to a file such as `auth.json`; pass the file it points to with
+`--settings`. If you added an `anote brief`
+hook to `config.toml` by hand, remove it, or you get two briefs. The hook
+names anote by its absolute path, as `hook claude` does, so anote does not
+need to be on Codex's PATH; if you move that copy of anote, run
+`anote hook codex --write --force` again.
+
+To remove the hook, delete its object from `hooks.SessionStart` in the hooks
+file, or restore the `.anote-backup` copy, as for Claude Code above.
+
+Checked against the Codex hooks docs (2026-10-19); not yet run in a real Codex session.
+
 ## Note types
 
 A note has exactly one type. The set is fixed, and `anote types` prints it.
@@ -296,6 +334,7 @@ optionally following one type. Assertions link to the question they answer with
 | `skill install` | copy the bundled skill into `--agent hermes`, `--agent claude` or `--dir DIR` |
 | `skill path` | print where the bundled skill file is |
 | `hook claude` | print, or add with `--write`, a Claude Code hook that runs brief at session start |
+| `hook codex` | print, or add with `--write`, a Codex CLI hook that runs brief at session start |
 | `publish mark NOTE` | mark one note for publishing (see Publishing) |
 | `publish unmark NOTE` | clear that mark |
 | `publish preview` | print the records an export would write, and what is left out |
