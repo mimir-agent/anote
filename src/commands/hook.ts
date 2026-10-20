@@ -23,9 +23,18 @@ function shellQuote(s: string): string {
   return `'${s.replaceAll("'", `'\\''`)}'`;
 }
 
-/** A handler that runs anote brief, whatever its flags. */
+// This file is src/commands/hook.ts from source and dist/commands/hook.js when installed; the package
+// root is two levels up in both. From source the repo's launcher runs anote; installed, the package bin.
+// The hook names it by path because Claude Code's hook shell may not have anote on its PATH.
+const ROOT = path.resolve(import.meta.dirname, "..", "..");
+const ANOTE = path.join(ROOT, import.meta.filename.endsWith(".ts") ? "anote" : path.join("bin", "anote.js"));
+
+/**
+ * A handler that runs anote brief, whatever its flags: through a quoted path to anote, or the bare
+ * word anote that hooks written before the path was fixed in use.
+ */
 function isBrief(h: Json): h is Obj & { command: string } {
-  return isObj(h) && typeof h["command"] === "string" && /^anote brief(\s|$)/.test(h["command"]);
+  return isObj(h) && typeof h["command"] === "string" && /^(anote|'(?:[^']|'\\'')*\/anote(\.js)?') brief(\s|$)/.test(h["command"]);
 }
 
 /** Errors from the filesystem (ENOTDIR, EACCES, ...) are runtime failures, exit 1. */
@@ -74,7 +83,7 @@ export function cmdHookClaude(a: Args): number {
     die(2, `--budget must be between ${MIN_BUDGET} and ${MAX_BUDGET} characters, got ${budget}`);
   }
   const graph = path.resolve(graphDir(a.str("graph")));
-  const command = `anote brief --budget ${budget} --graph ${shellQuote(graph)}`;
+  const command = `${shellQuote(ANOTE)} brief --budget ${budget} --graph ${shellQuote(graph)}`;
   if (!fs.statSync(graph, { throwIfNoEntry: false })?.isDirectory()) {
     printErr(`warning: no graph at ${graph} yet; the hook will report an error until you run anote init`);
   }
