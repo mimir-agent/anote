@@ -122,6 +122,24 @@ describe("brief", () => {
     assert.ok(ok.out.length <= 200);
   });
 
+  it("a graph path that does not exist: exit 1, says so on stderr, creates nothing", () => {
+    const missing = path.join(c.tmp, "no-such-graph");
+    const r = c.run(["brief", "--graph", missing]);
+    assert.equal(r.code, 1);
+    assert.equal(r.out, "");
+    assert.equal(r.err, `anote: no graph at ${missing} (run anote init)\n`);
+    assert.equal(fs.existsSync(missing), false);
+  });
+
+  it("a graph made by anote init with nothing in it: nothing due, exit 0", () => {
+    const g = path.join(c.tmp, "fresh");
+    assert.equal(c.run(["init", "--graph", g]).code, 0);
+    const r = c.run(["brief", "--graph", g]);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.err, "");
+    assert.equal(r.out, "due notes:\n  nothing due\nlog lines:\n  no log lines\n");
+  });
+
   it("empty graph prints both headers and exits 0", () => {
     const r = c.run(["brief"]);
     assert.equal(r.code, 0, r.err);
