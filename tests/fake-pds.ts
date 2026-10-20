@@ -2,10 +2,7 @@
 // Every host here is invented (.example and .test names). The PLC directory url
 // is the only real name: the fake answers it, so it is never contacted.
 import * as fs from "node:fs";
-import * as http from "node:http";
-import * as https from "node:https";
-import * as net from "node:net";
-import { syncBuiltinESMExports } from "node:module";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import type { HttpRequest, HttpResponse, Json, Transport } from "../src/send.ts";
 
 /** The invented account every send test uses unless it says otherwise. */
@@ -29,6 +26,8 @@ export interface FakeState {
   /** Extra generated records per collection, to test the 1000 limit without a huge file. */
   bulk?: Record<string, number>;
   pageSize?: number;
+  /** Answer the first `times` listRecords calls with this status. */
+  failList?: { status: number; times: number };
 }
 
 /** A DID document naming `pds` as the account's PDS. */
@@ -64,6 +63,7 @@ const json = (status: number, body: unknown): HttpResponse => ({
 
 /** The fake transport. Records every request (to `log`) before answering it. */
 export function fakeTransport(state: FakeState, log: (l: Logged) => void): Transport {
+  let listCalls = 0;
   return async (req: HttpRequest) => {
     log({ method: req.method, url: req.url, via: "fake" });
     if (req.method !== "GET") return json(405, { error: "MethodNotAllowed" });
@@ -77,6 +77,8 @@ export function fakeTransport(state: FakeState, log: (l: Logged) => void): Trans
       return doc === undefined ? json(404, { message: "DID not registered" }) : json(200, doc);
     }
     if (u.origin === state.pds && u.pathname === "/xrpc/com.atproto.repo.listRecords") {
+      listCalls++;
+      if (state.failList && listCalls <= state.failList.times) return json(state.failList.status, { error: "InternalServerError", message: "x" });
       const repo = u.searchParams.get("repo");
       const collection = u.searchParams.get("collection") ?? "";
       if (repo !== state.repo) return json(400, { error: "InvalidRequest" });
@@ -107,12 +109,19 @@ export function installNetworkGuard(log: (l: Logged) => void): void {
     throw new Error(`test guard: real network request refused (${what} ${target})`);
   };
   globalThis.fetch = refuse("fetch") as typeof fetch;
-  for (const m of [http, https] as Array<Record<string, unknown>>) {
-    m["request"] = refuse("request");
-    m["get"] = refuse("get");
+  // The CommonJS module objects are writable; syncBuiltinESMExports copies the
+  // changes to the ES module namespaces that `import` gives.
+  const load = createRequire(import.meta.url);
+  for (const name of ["node:http", "node:https"]) {
+    const m = load(name) as Record<string, unknown>;
+    m["request"] = refuse(`${name} request`);
+    m["get"] = refuse(`${name} get`);
   }
-  (net as Record<string, unknown>)["connect"] = refuse("connect");
-  (net as Record<string, unknown>)["createConnection"] = refuse("createConnection");
+  for (const name of ["node:net", "node:tls"]) {
+    const m = load(name) as Record<string, unknown>;
+    m["connect"] = refuse(`${name} connect`);
+    if (name === "node:net") m["createConnection"] = refuse(`${name} createConnection`);
+  }
   syncBuiltinESMExports();
 }
 
