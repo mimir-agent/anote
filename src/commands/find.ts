@@ -4,7 +4,7 @@ import * as path from "node:path";
 import type { Args } from "../args.ts";
 import { graphDir, incoming, loadAll, mdFiles } from "../store.ts";
 import { marker, supersededLog, type SupersededLine } from "../superseded.ts";
-import { cmp, cpLen, padEnd, print, readText, slugify, words } from "../util.ts";
+import { cmp, cpLen, padEnd, parseDate, print, readText, slugify, today, words } from "../util.ts";
 import { emit } from "./types.ts";
 
 interface Doc {
@@ -52,6 +52,17 @@ function snippet(body: string, toks: string[], width = 140): string {
   return (start > 0 ? "..." : "") + chunk + (start + width < flat.length ? "..." : "");
 }
 
+/**
+ * " (due)" for an active note whose review date is today or earlier, the rule
+ * dueNotes() uses for stale and brief. A review that is not a date gets no
+ * marker; `anote check` reports it, and search must not fail on it.
+ */
+function dueFlag(d: Doc, now: number): string {
+  if (d.kind !== "note" || d.status !== "active") return "";
+  const rev = parseDate(d.review);
+  return rev !== null && rev <= now ? " (due)" : "";
+}
+
 /** One indented line per superseded log line in a daily hit. */
 function markerLines(list: SupersededLine[]): string[] {
   return list.map((s) => `    line ${s.line} ${marker(s)}`);
@@ -89,14 +100,15 @@ export function cmdSearch(a: Args): void {
   const marked = supersededLog(g, notes);
   const limit = a.num("limit");
   const budget = a.num("budget");
-  const results: Array<Doc & { score: number; snippet: string; superseded: SupersededLine[] }> = [];
+  const now = today();
+  const results: Array<Doc & { score: number; snippet: string; superseded: SupersededLine[]; due: string }> = [];
   let used = 0;
   for (const { sc, d } of ranked) {
     if (sc <= 0 || results.length >= limit) break;
     const superseded = d.kind === "daily" ? (marked.get(d.title) ?? []) : [];
-    const r = { ...d, score: sc, snippet: snippet(d.body, toks), superseded };
+    const r = { ...d, score: sc, snippet: snippet(d.body, toks), superseded, due: dueFlag(d, now) };
     const marks = markerLines(r.superseded).reduce((n, l) => n + cpLen(l) + 1, 0);
-    const cost = Math.floor((cpLen(r.slug) + cpLen(r.title) + cpLen(r.snippet) + marks + 30) / 4);
+    const cost = Math.floor((cpLen(r.slug) + cpLen(r.title) + cpLen(r.snippet) + marks + cpLen(r.due) + 30) / 4);
     if (budget && results.length > 0 && used + cost > budget) break;
     used += cost;
     results.push(r);
@@ -124,7 +136,7 @@ export function cmdSearch(a: Args): void {
   const out: string[] = [];
   for (const r of results) {
     const flag = r.status === "active" ? "" : ` (${r.status})`;
-    out.push(`${r.slug}  "${r.title}"${flag}  [${r.source}, ${r.updated}]`);
+    out.push(`${r.slug}  "${r.title}"${flag}${r.due}  [${r.source}, ${r.updated}]`);
     out.push("    " + r.snippet);
     out.push(...markerLines(r.superseded));
   }

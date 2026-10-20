@@ -175,9 +175,11 @@ referenced often. Anyone else is written as plain text in the log.
 
 `--version` records what the note was true for, such as a software version.
 `anote stale` lists notes whose review date has arrived. `anote confirm` marks a
-note re-checked and pushes the date out. When a claim is wrong, `anote supersede
-OLD NEW` retires the old note instead of overwriting it. Superseded notes drop
-out of search and lists, and stay on disk with a pointer to their replacement.
+note re-checked and pushes the date out. `anote search` marks the same notes
+with `(due)` on their hit line, so a past-review note is not read as current.
+When a claim is wrong, `anote supersede OLD NEW` retires the old note instead
+of overwriting it. Superseded notes drop out of search and lists, and stay on
+disk with a pointer to their replacement.
 
 ## Links
 
