@@ -88,13 +88,18 @@ export function normType(raw: string): string {
   return t;
 }
 
-/** Validate a type line and return it normalised, e.g. 'reference text article'. */
-export function checkType(raw: string): string {
-  const w = raw
+/** The words of a type line as checkType reads them: split on spaces and commas, no '#', lowercase. */
+export function typeWords(raw: string): string[] {
+  return raw
     .trim()
     .split(/[\s,]+/)
     .map((x) => x.replace(/^#+/, "").toLowerCase())
     .filter((x) => x !== "");
+}
+
+/** Validate a type line and return it normalised, e.g. 'reference text article'. */
+export function checkType(raw: string): string {
+  const w = typeWords(raw);
   const noteTypes = list(Object.keys(NOTE_TYPES));
   const head = w[0];
   if (head === undefined) die(2, `type is empty. Types: ${noteTypes}`);

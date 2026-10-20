@@ -254,8 +254,9 @@ with its confirmation hash (see below).
 - Nothing is published by default. Only `anote publish mark NOTE` sets
   `published: yes`, and only `anote publish unmark NOTE` clears it; `set`
   refuses those keys.
-- `publish mark` refuses (exit 2) person notes, daily logs, notes without a
-  url, urls that are not public http or https (localhost, `.local` names,
+- `publish mark` refuses (exit 2) person notes (however the type is cased or
+  written), notes whose type does not check, daily logs, notes without a url,
+  urls that are not public http or https (localhost, `.local` names,
   private or loopback IPs), and a url another marked note already has.
 - Marking records a hash of the title, body, url and links. A note changed
   afterwards is left out until it is marked again.
@@ -269,7 +270,8 @@ with its confirmation hash (see below).
 - `publish preview [--json]` lists the cards, connections and collections, then
   every note, link and daily log left out and why.
 - In a graph with at least one marked note, `check` also errors on a marked
-  person note, hash drift, `[[mentions]]` (also `[[slug|alias]]`) of unmarked
+  person note or one whose type does not check, hash drift, `[[mentions]]`
+  (also `[[slug|alias]]`, `[[slug#heading]]` and `[[slug#^block]]`) of unmarked
   notes in a marked title, body or link note, a url on a single-label host,
   duplicate urls, a body over 10000 bytes, a link note over 1000, a hub title
   over 100, and control or bidi characters (which can hide text on screen) in

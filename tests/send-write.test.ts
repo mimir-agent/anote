@@ -265,6 +265,35 @@ describe("send --write: story 5, a person note or a daily log never goes out", (
     assert.deepEqual(r.requests, []);
   });
 
+  for (const ty of ["Person", "PERSON", "#Person", "person, reference", "people"]) {
+    it(`a hand-marked person note typed '${ty}': no plan record, and --write refuses before any request`, () => {
+      const g = graph(`s5-type-${ty.replace(/\W+/g, "-")}`);
+      const ada = path.join(g, "notes", "ada-baker.md");
+      fs.writeFileSync(ada, fs.readFileSync(ada, "utf8").replace(/^type: .*$/m, `type: ${ty}`)
+        .replace("status: active\n", `status: active\npublished: yes\npublished_hash: ${"0".repeat(64)}\n`));
+      const { records } = matchPlan(buildPlan(loadAll(g), []), [], ACCOUNT.did);
+      assert.ok(!JSON.stringify(records).includes("example.org/ada"));
+      const r = send(g, emptyState(), ["--write", "--confirm", "000000000000"]);
+      assert.equal(r.code, 2);
+      assert.match(r.err, /ada-baker: .*\(G8\)/);
+      assert.equal(r.secretReads, 0);
+      assert.deepEqual(r.requests, []);
+    });
+  }
+
+  it("a [[slug#heading]] of an unmarked note: --write refuses before any request (G5)", () => {
+    const g = graph("s5-anchor");
+    const p = path.join(g, "notes", "autolyse-before-salt.md");
+    fs.writeFileSync(p, fs.readFileSync(p, "utf8").replace("Rest flour and water first.", "See [[wetter-dough-opens-the-crumb#part]]."));
+    const c = new Ctx();
+    c.tmp = g;
+    assert.equal(c.run(["publish", "mark", "autolyse-before-salt"]).code, 0);
+    const r = send(g, emptyState(), ["--write", "--confirm", "000000000000"]);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /body mentions unpublished note \[\[wetter-dough-opens-the-crumb\]\] \(G5\)/);
+    assert.deepEqual(r.requests, []);
+  });
+
   /** A plan for the sourdough graph with one extra record the plan code should never make. */
   function injected(g: string, extra: (records: Planned[]) => Planned[]): Planned[] {
     const { records } = matchPlan(buildPlan(loadAll(g), []), [], ACCOUNT.did);

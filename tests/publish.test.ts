@@ -80,6 +80,28 @@ describe("publish mark and unmark", () => {
     assert.ok(!c.read("ada-baker").includes("published"));
   });
 
+  for (const ty of ["Person", "PERSON", "#Person", "person, reference"]) {
+    it(`refuses a person note whose type line is '${ty}' (G3)`, () => {
+      c.add("Ada Baker", ["--type", "person", "--person-ok", "--url", "https://example.org/ada"]);
+      const p = c.notePath("ada-baker");
+      fs.writeFileSync(p, fs.readFileSync(p, "utf8").replace(/^type: .*$/m, `type: ${ty}`));
+      const r = c.run(["publish", "mark", "ada-baker"]);
+      assert.equal(r.code, 2);
+      assert.match(r.err, /person notes are never published \(G3\)/);
+      assert.ok(!c.read("ada-baker").includes("published"));
+    });
+  }
+
+  it("refuses a note whose type does not check, such as 'people' (G8 fails closed)", () => {
+    c.add("Ada Baker", ["--type", "person", "--person-ok", "--url", "https://example.org/ada"]);
+    const p = c.notePath("ada-baker");
+    fs.writeFileSync(p, fs.readFileSync(p, "utf8").replace(/^type: .*$/m, "type: people"));
+    const r = c.run(["publish", "mark", "ada-baker"]);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /cannot mark ada-baker: its type does not check \(unknown note type 'people'.*\(G8\)/);
+    assert.ok(!c.read("ada-baker").includes("published"));
+  });
+
   it("refuses a daily log (G3)", () => {
     c.run(["log", "fed the starter"]);
     const r = c.run(["publish", "mark", c.today]);
@@ -261,6 +283,36 @@ describe("check with published notes", () => {
     assert.match(r.out, /ada-baker: a person note is marked published.*\(G8\)/);
   });
 
+  /** The sourdough graph with Ada Baker's type line set to `ty` and the note marked by hand. */
+  function adaTyped(ty: string): void {
+    sourdough(c);
+    const p = c.notePath("ada-baker");
+    fs.writeFileSync(p, fs.readFileSync(p, "utf8").replace(/^type: .*$/m, `type: ${ty}`)
+      .replace("status: active\n", `status: active\npublished: yes\npublished_hash: ${"0".repeat(64)}\n`));
+  }
+
+  for (const ty of ["Person", "PERSON", "#Person", "person, reference"]) {
+    it(`errors on a hand-marked person note typed '${ty}' (G8), and leaves it out`, () => {
+      adaTyped(ty);
+      const r = c.run(["check"]);
+      assert.equal(r.code, 1);
+      assert.match(r.out, /ada-baker: a person note is marked published.*\(G8\)/);
+      const p = preview(c);
+      assert.equal(leftOutNotes(p)["ada-baker"], "person");
+      assert.ok(!JSON.stringify(p.records).includes("example.org/ada"));
+    });
+  }
+
+  it("errors on a hand-marked note whose type does not check, such as 'people' (G8), and leaves it out", () => {
+    adaTyped("people");
+    const r = c.run(["check"]);
+    assert.equal(r.code, 1);
+    assert.match(r.out, /ada-baker: marked published but its type does not check \(unknown note type 'people'.*\(G8\)/);
+    const p = preview(c);
+    assert.equal(leftOutNotes(p)["ada-baker"], "type does not check");
+    assert.ok(!JSON.stringify(p.records).includes("example.org/ada"));
+  });
+
   it("errors on hash drift (G4)", () => {
     sourdough(c);
     c.run(["set", "sourdough-hydration-ratios", "title", "Hydration ratios"]);
@@ -329,6 +381,40 @@ describe("check with published notes", () => {
     assert.match(r.out, /autolyse-before-salt: body mentions unpublished note \[\[wetter-dough-opens-the-crumb\]\] \(G5\)/);
     assert.equal(leftOutNotes(preview(c))["autolyse-before-salt"], "body mentions an unpublished note");
     assert.ok(!JSON.stringify(preview(c).records).includes("wetter-dough"));
+  });
+
+  for (const form of ["wetter-dough-opens-the-crumb#heading", "wetter-dough-opens-the-crumb#^block", "wetter-dough-opens-the-crumb#heading|alias"]) {
+    it(`errors on [[${form}]] of an unpublished note in a published body (G5), and leaves the note out`, () => {
+      sourdough(c);
+      c.run(["append", "autolyse-before-salt", `See [[${form}]].`]);
+      c.run(["publish", "mark", "autolyse-before-salt"]);
+      const r = c.run(["check"]);
+      assert.equal(r.code, 1);
+      assert.match(r.out, /autolyse-before-salt: body mentions unpublished note \[\[wetter-dough-opens-the-crumb\]\] \(G5\)/);
+      assert.equal(leftOutNotes(preview(c))["autolyse-before-salt"], "body mentions an unpublished note");
+      assert.ok(!JSON.stringify(preview(c).records).includes("wetter-dough"));
+    });
+
+    it(`errors on [[${form}]] in a published title and in a link note (G5)`, () => {
+      sourdough(c);
+      c.run(["set", "autolyse-before-salt", "title", `Autolyse [[${form}]]`]);
+      c.run(["publish", "mark", "autolyse-before-salt"]);
+      c.run(["link", "sourdough-hydration-ratios", "relates", "autolyse-before-salt", "--note", `cf [[${form}]]`]);
+      c.run(["publish", "mark", "sourdough-hydration-ratios"]);
+      const r = c.run(["check"]);
+      assert.equal(r.code, 1);
+      assert.match(r.out, /autolyse-before-salt: title mentions unpublished note \[\[wetter-dough-opens-the-crumb\]\] \(G5\)/);
+      assert.match(r.out, /sourdough-hydration-ratios: note on link to autolyse-before-salt mentions unpublished note \[\[wetter-dough-opens-the-crumb\]\] \(G5\)/);
+      assert.ok(!JSON.stringify(preview(c).records).includes("wetter-dough"));
+    });
+  }
+
+  it("a [[slug#heading]] of a marked note is not a G5 error", () => {
+    sourdough(c);
+    c.run(["append", "autolyse-before-salt", "See [[sourdough-hydration-ratios#ratios|the ratios]]."]);
+    c.run(["publish", "mark", "autolyse-before-salt"]);
+    const r = c.run(["check"]);
+    assert.equal(r.code, 0, r.out);
   });
 
   it("errors on a [[mention]] of an unpublished note in a published title (G5), and leaves the note out", () => {

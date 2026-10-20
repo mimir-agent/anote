@@ -4,7 +4,8 @@
 import { createHash } from "node:crypto";
 import type { Note } from "./frontmatter.ts";
 import type { Notes } from "./store.ts";
-import { cmp, slugify } from "./util.ts";
+import { checkType } from "./schema.ts";
+import { Fail, cmp, slugify } from "./util.ts";
 
 function getNoteOrNull(notes: Notes, slug: string): Note | null {
   return notes.get(slug) ?? null;
@@ -45,6 +46,21 @@ export function isMarked(n: Note): boolean {
 export function contentHash(n: Note): string {
   const parts = [n.meta["title"] ?? "", n.body, n.meta["url"] ?? "", n.links.map((l) => [l.type, l.to, l.note])];
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
+}
+
+/**
+ * Why a note's type line fails checkType, or null when it passes. A note whose
+ * type does not check is never exported (G8 fails closed): a variant like
+ * `people` must not slip past the person rule.
+ */
+export function typeProblem(n: Note): string | null {
+  try {
+    checkType(n.meta["type"] ?? "");
+    return null;
+  } catch (e) {
+    if (e instanceof Fail) return e.message;
+    throw e;
+  }
 }
 
 export function hashDrifted(n: Note): boolean {
@@ -136,11 +152,12 @@ export function urlKey(raw: string): string {
 }
 
 /**
- * A [[mention]] for G5, including the [[slug|alias]] form: its slug goes out
- * in the text just the same. Wider than schema's WIKILINK on purpose; `check`
- * keeps that one for its no-such-note warning on every graph.
+ * A [[mention]] for G5, including the [[slug|alias]], [[slug#heading]] and
+ * [[slug#^block]] forms: the slug goes out in the text just the same. Wider
+ * than schema's WIKILINK on purpose; `check` keeps that one for its
+ * no-such-note warning on every graph.
  */
-const MENTION = /\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g;
+const MENTION = /\[\[([^\]|#^]+)(?:[#^][^\]|]*)?(?:\|[^\]]*)?\]\]/g;
 
 /** Slugs of notes that `text` mentions as [[...]] and that exist but are not marked. */
 export function unpublishedMentions(notes: Notes, text: string): string[] {
@@ -217,6 +234,7 @@ export interface Plan {
 /** Why a note is not exported, or null when it is. Order decides which reason shows. */
 function noteReason(notes: Notes, owners: Map<string, string[]>, s: string, n: Note): string | null {
   if (n.kind === "person") return "person";
+  if (typeProblem(n) !== null) return "type does not check";
   if (n.status !== "active") return n.status;
   const url = n.meta["url"];
   if (!isMarked(n)) return n.kind !== "hub" && !url ? "no url" : "not marked";

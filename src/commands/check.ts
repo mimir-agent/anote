@@ -5,8 +5,8 @@ import { LINK_TYPES, SOURCES, STANCES, WIKILINK, checkType } from "../schema.ts"
 import { getNote, graphDir, incoming, loadAll } from "../store.ts";
 import type { Notes } from "../store.ts";
 import {
-  MAX_BODY, MAX_HUB_TITLE, MAX_LINK_NOTE, bytes, connectionNote, hasHidingChars, hashDrifted, isMarked, unpublishedMentions,
-  urlKey, urlProblem,
+  MAX_BODY, MAX_HUB_TITLE, MAX_LINK_NOTE, bytes, connectionNote, hasHidingChars, hashDrifted, isMarked, typeProblem,
+  unpublishedMentions, urlKey, urlProblem,
 } from "../publish.ts";
 import { cmp, padEnd, parseDate, slugify } from "../util.ts";
 import { emit } from "./types.ts";
@@ -31,6 +31,11 @@ export function publishErrors(notes: Notes): Array<[string, string]> {
     const err = (m: string) => out.push([s, m]);
     if (n.kind === "person") {
       err("a person note is marked published; person notes are never published (G8)");
+      continue;
+    }
+    const tp = typeProblem(n);
+    if (tp !== null) {
+      err(`marked published but its type does not check (${tp}); it is never published (G8)`);
       continue;
     }
     if (hashDrifted(n)) err("changed since `anote publish mark`; mark it again or unmark it (G4)");

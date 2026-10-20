@@ -1,8 +1,8 @@
 // The note file format: a `---` block of `key: value` lines, an optional
 // `links:` list, then a markdown body. Hand-written on purpose: this is not
 // full YAML, and it must round-trip exactly like the original.
-import { META_ORDER } from "./schema.ts";
-import { Fail, cmp, strip, stripNewlines, words } from "./util.ts";
+import { META_ORDER, typeWords } from "./schema.ts";
+import { Fail, cmp, strip, stripNewlines } from "./util.ts";
 
 export interface Link {
   type: string;
@@ -41,10 +41,9 @@ export class Note {
     return this.meta["status"] ?? "active";
   }
 
-  /** First word of the type line without any '#', or "". */
+  /** First word of the type line as checkType reads it (no '#', lowercase), or "". */
   get kind(): string {
-    const first = words(this.meta["type"] ?? "")[0] ?? "";
-    return first.replace(/^#+/, "");
+    return typeWords(this.meta["type"] ?? "")[0] ?? "";
   }
 }
 
