@@ -286,7 +286,8 @@ describe("hook claude: --write", () => {
     fs.writeFileSync(path.join(home, ".claude"), "");
     const r = run(["--write"]);
     assert.equal(r.code, 1);
-    assert.match(r.err, /^anote: ENOTDIR: /);
+    // The missing-graph warning comes first; the OS error is on its own line.
+    assert.match(r.err, /^anote: ENOTDIR: /m);
     assert.equal(fs.readFileSync(path.join(home, ".claude"), "utf8"), "");
   });
 });

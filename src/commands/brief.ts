@@ -35,6 +35,8 @@ export function cmdBrief(a: Args): void {
   const budget = a.num("budget");
   if (budget < MIN_BUDGET) die(2, `--budget must be at least ${MIN_BUDGET} characters, got ${budget}`);
   const g = graphDir(a.str("graph"));
+  // A missing graph would otherwise print "nothing due", which looks like a healthy empty graph.
+  if (!fs.statSync(g, { throwIfNoEntry: false })?.isDirectory()) die(1, `no graph at ${g} (run anote init)`);
   const due = dueNotes(loadAll(g), today()).map((d) => `  ${d.slug}  "${d.title}"  review ${d.review}`);
   const logs = logLinesNewestFirst(g);
 
