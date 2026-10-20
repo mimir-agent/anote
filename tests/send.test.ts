@@ -320,12 +320,6 @@ describe("publish send: story 2, a clear stop when the account setup is wrong", 
     }
   });
 
-  it("--write is not available yet", () => {
-    const r = send(graph("s2-write"), emptyState(), ["--write"]);
-    assert.equal(r.code, 2);
-    assert.match(r.err, /--write is not available yet/);
-    assert.deepEqual(r.requests, []);
-  });
 });
 
 describe("publish send: refusals", () => {

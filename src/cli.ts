@@ -121,7 +121,7 @@ const GROUPS: Record<string, Record<string, Command>> = {
     send: {
       run: cmdPublishSend,
       spec: [
-        val("--max", { int: true, default: CAP }), flag("--write"),
+        val("--max", { int: true, default: CAP }), flag("--write"), val("--confirm"),
         ...REFUSED.map((f) => (f === "--delete" ? flag(f) : val(f))),
       ],
     },
@@ -173,6 +173,22 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (!cmd) {
     return mainUsageError(`argument command: invalid choice: '${first}' (choose from ${names.map((n) => `'${n}'`).join(", ")})`);
+  }
+  if (name === "publish send") {
+    // The only command that can read a secret: an unknown option is refused by
+    // name alone, so a value typed after it (say --app-password X) is never echoed.
+    const known = new Set(["-h", "--help", "--graph", "--json", ...cmd.spec.flatMap((s) => ("flag" in s ? [s.flag] : []))]);
+    for (const t of [...pre, ...rest]) {
+      if (t === "--") break;
+      if (!t.startsWith("-") || t === "-" || /^-\d+$/.test(t)) continue;
+      const opt = t.split("=")[0] as string;
+      const hits = [...known].filter((k) => k === opt || (opt.startsWith("--") && opt.length > 2 && k.startsWith(opt)));
+      if (hits.length === 0) {
+        printErr(MAIN_USAGE);
+        printErr(`anote: error: unrecognized option ${/^--?[A-Za-z0-9-]{1,40}$/.test(opt) ? opt : "(not shown)"}; its value is not shown`);
+        return 2;
+      }
+    }
   }
   try {
     const args = parseCommand(`anote ${name}`, HELP[name] as string, MAIN_USAGE, cmd.spec, rest, pre);

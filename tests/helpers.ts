@@ -7,6 +7,7 @@ import * as assert from "node:assert/strict";
 import { afterEach, beforeEach } from "node:test";
 
 const MAIN = path.resolve(import.meta.dirname, "..", "src", "main.ts");
+const GUARD = path.resolve(import.meta.dirname, "net-guard.ts");
 
 export interface Run {
   code: number;
@@ -20,7 +21,7 @@ export class Ctx {
 
   run(args: string[], opts: { today?: string; stdin?: string } = {}): Run {
     const env = { ...process.env, ANOTE_GRAPH: this.tmp, ANOTE_TODAY: opts.today ?? this.today };
-    const r = spawnSync("node", ["--disable-warning=ExperimentalWarning", MAIN, ...args], {
+    const r = spawnSync("node", ["--disable-warning=ExperimentalWarning", "--import", GUARD, MAIN, ...args], {
       env, input: opts.stdin ?? "", encoding: "utf8",
     });
     return { code: r.status ?? -1, out: r.stdout, err: r.stderr };

@@ -1,12 +1,17 @@
 // Runs the real CLI with the fake PDS injected and real network refused.
 // FAKE_PDS_STATE names a JSON file with the fake's state; every request, and
-// every read of ANOTE_PUBLISH_APP_PASSWORD, is appended to FAKE_PDS_LOG.
+// every read of ANOTE_PUBLISH_APP_PASSWORD, is appended to FAKE_PDS_LOG. The
+// fake's state (with any records written) is saved back to FAKE_PDS_STATE at
+// the end, so a test can run send again against the same repo. FAKE_TTY=1
+// makes send treat stdin as a terminal.
 import * as fs from "node:fs";
 import { appendLine, fakeTransport, installNetworkGuard } from "./fake-pds.ts";
 import type { FakeState } from "./fake-pds.ts";
 
 const logFile = process.env["FAKE_PDS_LOG"] as string;
-const state = JSON.parse(fs.readFileSync(process.env["FAKE_PDS_STATE"] as string, "utf8")) as FakeState;
+const stateFile = process.env["FAKE_PDS_STATE"] as string;
+const state = JSON.parse(fs.readFileSync(stateFile, "utf8")) as FakeState;
+const tty = process.env["FAKE_TTY"] === "1";
 installNetworkGuard((l) => appendLine(logFile, l));
 
 const SECRET = "ANOTE_PUBLISH_APP_PASSWORD";
@@ -26,7 +31,12 @@ process.env = new Proxy(env, {
   },
 });
 
-const { setTransport } = await import("../src/commands/send.ts");
+const { setInteractive, setTransport } = await import("../src/commands/send.ts");
 const { main } = await import("../src/cli.ts");
 setTransport(fakeTransport(state, (l) => appendLine(logFile, l)));
-process.exitCode = await main(process.argv.slice(2));
+setInteractive(() => tty);
+try {
+  process.exitCode = await main(process.argv.slice(2));
+} finally {
+  fs.writeFileSync(stateFile, JSON.stringify(state));
+}

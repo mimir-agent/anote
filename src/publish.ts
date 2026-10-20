@@ -237,6 +237,12 @@ function noteReason(notes: Notes, owners: Map<string, string[]>, s: string, n: N
   return null;
 }
 
+/** For every note: why it is not exported, or null when it is (the rules buildPlan applies). */
+export function exportReasons(notes: Notes): Map<string, string | null> {
+  const owners = urlOwners(notes);
+  return new Map([...notes].map(([s, n]) => [s, noteReason(notes, owners, s, n)]));
+}
+
 /** Why a link from a non-hub note is not a connection, or null when it is. */
 function linkReason(notes: Notes, out: Set<string>, s: string, to: string, type: string, note: string): string | null {
   const t = getNoteOrNull(notes, to);
