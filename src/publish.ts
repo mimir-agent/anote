@@ -3,7 +3,6 @@
 // in the publish spec). Nothing here opens a connection or writes a file.
 import { createHash } from "node:crypto";
 import type { Note } from "./frontmatter.ts";
-import { WIKILINK } from "./schema.ts";
 import type { Notes } from "./store.ts";
 import { cmp, slugify } from "./util.ts";
 
@@ -107,13 +106,28 @@ export function hostProblem(hostRaw: string): string | null {
   return null;
 }
 
+/**
+ * Characters that can hide or reorder text on a terminal: C0 controls other
+ * than tab and newline, DEL, C1 controls, the line and paragraph separators,
+ * and the bidi embedding, override and isolate controls. A dry run that shows
+ * them raw can show different text from what is sent, so a published title,
+ * body, url or link note may not carry them (G10).
+ */
+const HIDING = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
+
+export function hasHidingChars(s: string): boolean {
+  return HIDING.test(s);
+}
+
 /** Why a url cannot be published (G9), or null when it can. */
 export function urlProblem(raw: string): string | null {
   const u = parseWebUrl(raw);
   if (!u) return "url must be an absolute http or https URL";
   if (u.username || u.password) return "url must not carry a user name or password";
   const host = hostProblem(u.hostname);
-  return host ? `url points at ${host}` : null;
+  if (host) return `url points at ${host}`;
+  if (!u.hostname.startsWith("[") && !u.hostname.replace(/\.$/, "").includes(".")) return "url points at a single-label host";
+  return null;
 }
 
 /** The form urls are compared in (one published note per url). */
@@ -121,10 +135,17 @@ export function urlKey(raw: string): string {
   return parseWebUrl(raw)?.href ?? raw;
 }
 
+/**
+ * A [[mention]] for G5, including the [[slug|alias]] form: its slug goes out
+ * in the text just the same. Wider than schema's WIKILINK on purpose; `check`
+ * keeps that one for its no-such-note warning on every graph.
+ */
+const MENTION = /\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g;
+
 /** Slugs of notes that `text` mentions as [[...]] and that exist but are not marked. */
 export function unpublishedMentions(notes: Notes, text: string): string[] {
   const out = new Set<string>();
-  for (const m of text.matchAll(WIKILINK)) {
+  for (const m of text.matchAll(MENTION)) {
     const w = m[1] as string;
     const s = notes.has(slugify(w)) ? slugify(w) : notes.has(w.trim()) ? w.trim() : null;
     const t = s === null ? null : getNoteOrNull(notes, s);
@@ -210,6 +231,8 @@ function noteReason(notes: Notes, owners: Map<string, string[]>, s: string, n: N
     if (others.length > 0) return `duplicate url (also on ${others.join(", ")})`;
   }
   if (bytes(n.body) > MAX_BODY) return `body over ${MAX_BODY}`;
+  if (hasHidingChars(n.title) || hasHidingChars(n.body) || hasHidingChars(url ?? "")) return "control or bidi characters";
+  if (unpublishedMentions(notes, n.title).length > 0) return "title mentions an unpublished note";
   if (unpublishedMentions(notes, n.body).length > 0) return "body mentions an unpublished note";
   return null;
 }
@@ -225,6 +248,7 @@ function linkReason(notes: Notes, out: Set<string>, s: string, to: string, type:
   if (!out.has(to)) return "target left out";
   const text = connectionNote(type, note);
   if (bytes(text) > MAX_LINK_NOTE) return `link note over ${MAX_LINK_NOTE}`;
+  if (hasHidingChars(text)) return "link note has control or bidi characters";
   if (unpublishedMentions(notes, text).length > 0) return "link note mentions an unpublished note";
   return null;
 }

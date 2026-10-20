@@ -5,7 +5,7 @@ import { LINK_TYPES, SOURCES, STANCES, WIKILINK, checkType } from "../schema.ts"
 import { getNote, graphDir, incoming, loadAll } from "../store.ts";
 import type { Notes } from "../store.ts";
 import {
-  MAX_BODY, MAX_HUB_TITLE, MAX_LINK_NOTE, bytes, connectionNote, hashDrifted, isMarked, unpublishedMentions,
+  MAX_BODY, MAX_HUB_TITLE, MAX_LINK_NOTE, bytes, connectionNote, hasHidingChars, hashDrifted, isMarked, unpublishedMentions,
   urlKey, urlProblem,
 } from "../publish.ts";
 import { cmp, padEnd, parseDate, slugify } from "../util.ts";
@@ -46,6 +46,10 @@ export function publishErrors(notes: Notes): Array<[string, string]> {
       err(`hub title is over ${MAX_HUB_TITLE} bytes (G10)`);
     }
     if (bytes(n.body) > MAX_BODY) err(`body is over ${MAX_BODY} bytes (G10)`);
+    for (const [what, v] of [["title", n.title], ["body", n.body], ["url", url ?? ""]] as const) {
+      if (hasHidingChars(v)) err(`${what} has control or bidi characters that can hide text on screen (G10)`);
+    }
+    for (const m of unpublishedMentions(notes, n.title)) err(`title mentions unpublished note [[${m}]] (G5)`);
     for (const m of unpublishedMentions(notes, n.body)) err(`body mentions unpublished note [[${m}]] (G5)`);
     if (n.kind === "hub") continue;
     for (const l of n.links) {
@@ -53,6 +57,7 @@ export function publishErrors(notes: Notes): Array<[string, string]> {
       if (!t || !isMarked(t) || t.kind === "hub" || t.kind === "person") continue; // never exported
       const text = connectionNote(l.type, l.note);
       if (bytes(text) > MAX_LINK_NOTE) err(`note on link to ${l.to} is over ${MAX_LINK_NOTE} bytes (G10)`);
+      if (hasHidingChars(text)) err(`note on link to ${l.to} has control or bidi characters that can hide text on screen (G10)`);
       for (const m of unpublishedMentions(notes, text)) err(`note on link to ${l.to} mentions unpublished note [[${m}]] (G5)`);
     }
   }

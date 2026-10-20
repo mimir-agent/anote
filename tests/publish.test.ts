@@ -320,6 +320,51 @@ describe("check with published notes", () => {
     assert.equal(left["baking-basics"], "hub title over 100");
   });
 
+  it("errors on [[slug|alias]] of an unpublished note in a published body (G5), and leaves the note out", () => {
+    sourdough(c);
+    c.run(["append", "autolyse-before-salt", "See [[wetter-dough-opens-the-crumb|that]]."]);
+    c.run(["publish", "mark", "autolyse-before-salt"]);
+    const r = c.run(["check"]);
+    assert.equal(r.code, 1);
+    assert.match(r.out, /autolyse-before-salt: body mentions unpublished note \[\[wetter-dough-opens-the-crumb\]\] \(G5\)/);
+    assert.equal(leftOutNotes(preview(c))["autolyse-before-salt"], "body mentions an unpublished note");
+    assert.ok(!JSON.stringify(preview(c).records).includes("wetter-dough"));
+  });
+
+  it("errors on a [[mention]] of an unpublished note in a published title (G5), and leaves the note out", () => {
+    sourdough(c);
+    c.run(["set", "autolyse-before-salt", "title", "Autolyse [[Wetter dough opens the crumb]]"]);
+    c.run(["publish", "mark", "autolyse-before-salt"]);
+    const r = c.run(["check"]);
+    assert.equal(r.code, 1);
+    assert.match(r.out, /autolyse-before-salt: title mentions unpublished note \[\[wetter-dough-opens-the-crumb\]\] \(G5\)/);
+    assert.equal(leftOutNotes(preview(c))["autolyse-before-salt"], "title mentions an unpublished note");
+  });
+
+  it("a single-label url host cannot be marked and fails check (G9)", () => {
+    c.add("Intranet page", ["--url", "http://intranet/wiki"]);
+    const m = c.run(["publish", "mark", "intranet-page"]);
+    assert.equal(m.code, 2);
+    assert.match(m.err, /url points at a single-label host \(G9\)/);
+  });
+
+  it("errors on control or bidi characters in a published title, body or link note (G10)", () => {
+    sourdough(c);
+    const p = c.notePath("autolyse-before-salt");
+    fs.writeFileSync(p, fs.readFileSync(p, "utf8").replace("Rest flour and water first.", "Rest flour \u001b[8mhidden\u001b[0m and water first."));
+    c.run(["publish", "mark", "autolyse-before-salt"]);
+    c.run(["set", "baking-basics", "title", "Baking \u202ebasics"]);
+    c.run(["publish", "mark", "baking-basics"]);
+    const r = c.run(["check"]);
+    assert.equal(r.code, 1);
+    assert.match(r.out, /autolyse-before-salt: body has control or bidi characters that can hide text on screen \(G10\)/);
+    assert.match(r.out, /baking-basics: title has control or bidi characters/);
+    assert.ok(!r.out.includes("\u001b") && !r.out.includes("\u202e"), "check printed the characters raw");
+    const left = leftOutNotes(preview(c));
+    assert.equal(left["autolyse-before-salt"], "control or bidi characters");
+    assert.equal(left["baking-basics"], "control or bidi characters");
+  });
+
   it("a graph with no published notes gets no new errors, even with odd urls", () => {
     c.add("Local page", ["--url", "http://localhost/x", "--body", "see [[Nowhere at all]]"]);
     c.add("Twin", ["--url", "http://localhost/x"]);
