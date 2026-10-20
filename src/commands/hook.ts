@@ -82,6 +82,8 @@ interface Agent {
   maxBudget: number;
   /** The file used when --settings is not given. */
   defaultFile: () => string;
+  /** A last line after the hook is printed or written (stderr with --json); not after "unchanged". */
+  notice?: string;
 }
 
 // Claude Code adds at most 10,000 characters of hook output to the context.
@@ -91,7 +93,22 @@ const CLAUDE: Agent = {
   defaultFile: () => path.join(os.homedir(), ".claude", "settings.json"),
 };
 
+// Codex spills hook output over about 2,500 tokens to a file and shows the model only a preview;
+// 8,000 characters keeps brief whole at about 4 characters per token. Codex keeps the user's hooks
+// file in CODEX_HOME when that is set.
+const CODEX: Agent = {
+  name: "codex",
+  maxBudget: 8_000,
+  defaultFile: () => {
+    const home = process.env["CODEX_HOME"];
+    return path.join(home ? path.resolve(expandPath(home)) : path.join(os.homedir(), ".codex"), "hooks.json");
+  },
+  notice:
+    "Codex runs this hook only after you trust it: open /hooks in Codex and approve it. Project hooks also need the project's .codex folder to be trusted.",
+};
+
 export const cmdHookClaude = (a: Args): number => hook(a, CLAUDE);
+export const cmdHookCodex = (a: Args): number => hook(a, CODEX);
 
 function hook(a: Args, agent: Agent): number {
   const budget = a.num("budget");
@@ -108,8 +125,11 @@ function hook(a: Args, agent: Agent): number {
   const backup = settings + ".anote-backup";
   const handler: Obj = { type: "command", command };
   const block: Obj = { hooks: { SessionStart: [{ hooks: [handler] }] } };
-  const report = (action: string, text: string, withBackup = false): void =>
-    emit(a, { action, settings, command, ...(withBackup ? { backup } : {}) }, text);
+  const report = (action: string, text: string, withBackup = false): void => {
+    const notice = action === "unchanged" || action === "refused" ? undefined : agent.notice;
+    emit(a, { action, settings, command, ...(withBackup ? { backup } : {}) }, notice === undefined ? text : `${text}\n${notice}`);
+    if (notice !== undefined && a.flag("json")) printErr(notice);
+  };
   const refuse = (msg: string): number => {
     if (a.flag("json")) report("refused", "");
     printErr(`anote: ${msg}`);

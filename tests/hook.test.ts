@@ -430,9 +430,9 @@ describe("hook claude: usage", () => {
     assert.equal(h.status, 0);
     assert.match(h.stdout, /^usage: anote hook /);
     assert.match(h.stdout, /claude/);
-    const u = spawnSync("node", ["--disable-warning=ExperimentalWarning", MAIN, "hook", "codex"], { env, encoding: "utf8" });
+    const u = spawnSync("node", ["--disable-warning=ExperimentalWarning", MAIN, "hook", "nosuchagent"], { env, encoding: "utf8" });
     assert.equal(u.status, 2);
-    assert.match(u.stderr, /invalid choice: 'codex'/);
+    assert.match(u.stderr, /invalid choice: 'nosuchagent'/);
   });
 
   it("anote --help lists hook", () => {
