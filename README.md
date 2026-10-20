@@ -109,7 +109,7 @@ anote hook claude --write    # add it to ~/.claude/settings.json
 anote hook claude --write --settings .claude/settings.json   # a project's settings
 ```
 
-The hook runs `anote brief --budget 2000 --graph '/abs/path/to/graph'`. The
+The hook runs `'/abs/path/to/anote' brief --budget 2000 --graph '/abs/path/to/graph'`. The
 graph path is fixed when you run the command (from `--graph`, `$ANOTE_GRAPH` or
 `~/.hermes/graph`), because the hook's shell may not have `ANOTE_GRAPH` set.
 `--budget` sets brief's budget, from 200 to 10000 characters (Claude Code adds
@@ -121,7 +121,11 @@ other setting. Running it again changes nothing. If a different `anote brief`
 hook is already there, it is only replaced with `--force`. A file that is not
 plain JSON (comments count) is refused and left as it was.
 
-`anote` must be on the PATH that Claude Code's hook shell sees. To remove the
+The hook names anote by the absolute path of the copy that wrote it (the repo's
+`anote` launcher, or `bin/anote.js` in an npm install), so it works when Claude
+Code's hook shell does not have anote on its PATH. If you move that copy, run
+`anote hook claude --write --force` again. A hook written by an older anote
+with the bare word `anote` is replaced only with `--force`. To remove the
 hook, delete its entry under `hooks.SessionStart` in the settings file, or
 restore the `.anote-backup` copy.
 

@@ -36,7 +36,9 @@ function run(args: string[]): Run {
 
 const settingsPath = (): string => path.join(home, ".claude", "settings.json");
 const backupPath = (): string => settingsPath() + ".anote-backup";
-const command = (budget = 2000, g = graph): string => `anote brief --budget ${budget} --graph '${g}'`;
+// Run from source, the hook names the repo's launcher by its absolute path.
+const LAUNCHER = path.resolve(import.meta.dirname, "..", "anote");
+const command = (budget = 2000, g = graph): string => `'${LAUNCHER}' brief --budget ${budget} --graph '${g}'`;
 const handler = (cmd: string) => ({ type: "command", command: cmd });
 const block = (cmd: string) => ({ hooks: { SessionStart: [{ hooks: [handler(cmd)] }] } });
 
@@ -84,12 +86,34 @@ describe("hook claude: print", () => {
     const r = run(["--graph", odd, "--json"]);
     assert.equal(r.code, 0, r.err);
     const cmd = JSON.parse(r.out).command as string;
-    const prefix = "anote brief --budget 2000 --graph ";
+    const prefix = `'${LAUNCHER}' brief --budget 2000 --graph `;
     assert.ok(cmd.startsWith(prefix), cmd);
     const echoed = spawnSync("sh", ["-c", `printf '%s' ${cmd.slice(prefix.length)}`], { encoding: "utf8" });
     assert.equal(echoed.status, 0, echoed.stderr);
     assert.equal(echoed.stdout, odd);
     assert.equal(fs.existsSync(odd), false);
+  });
+
+  it("an anote whose path has a space runs from the hook with anote off the PATH; an absolute graph is kept as given", () => {
+    // A copy of the launcher and source in a folder with a space and a quote, so the path is not the repo's.
+    const root = path.join(tmp, "my tools", "anote's copy");
+    for (const p of ["anote", "package.json", "src"]) fs.cpSync(path.resolve(import.meta.dirname, "..", p), path.join(root, p), { recursive: true });
+    const g = path.join(tmp, "my notes", "graph");
+    const env = { ...process.env, HOME: home, ANOTE_GRAPH: graph };
+    const gen = spawnSync("node", ["--disable-warning=ExperimentalWarning", path.join(root, "src", "main.ts"), "hook", "claude", "--graph", g, "--json"], {
+      env, cwd: tmp, encoding: "utf8",
+    });
+    assert.equal(gen.status, 0, gen.stderr);
+    const cmd = JSON.parse(gen.stdout).command as string;
+    assert.equal(cmd, `'${path.join(tmp, "my tools", "anote'\\''s copy", "anote")}' brief --budget 2000 --graph '${g}'`);
+
+    fs.mkdirSync(path.join(g, "notes"), { recursive: true });
+    fs.mkdirSync(path.join(g, "daily"));
+    // Only node's own folder and the system folders: no anote anywhere on this PATH.
+    const bare = { HOME: home, PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, ANOTE_TODAY: "2026-10-09" };
+    const hook = spawnSync("/bin/sh", ["-c", cmd], { env: bare, cwd: tmp, encoding: "utf8" });
+    assert.equal(hook.status, 0, hook.stderr);
+    assert.match(hook.stdout, /^due notes:\n/);
   });
 });
 
@@ -253,6 +277,31 @@ describe("hook claude: --write", () => {
     assert.deepEqual(readJson(settingsPath()), {
       hooks: { SessionStart: [{ hooks: [{ type: "command", command: command(), timeout: 30 }] }] },
     });
+  });
+
+  it("a bare-word hook from before anote was named by path still parses: refused without --force, replaced with it", () => {
+    const bareWord = `anote brief --budget 2000 --graph '${graph}'`;
+    const text = JSON.stringify({ hooks: { SessionStart: [{ hooks: [handler(bareWord)] }] } });
+    writeSettings(text);
+    const r = run(["--write"]);
+    assert.equal(r.code, 1);
+    assert.ok(r.err.includes(`installed: ${bareWord}\n`), r.err);
+    assert.ok(r.err.includes(`this run:  ${command()}\n`), r.err);
+    assert.equal(fs.readFileSync(settingsPath(), "utf8"), text);
+    const f = run(["--write", "--force"]);
+    assert.equal(f.code, 0, f.err);
+    assert.deepEqual(readJson(settingsPath()), block(command()));
+    assert.equal(fs.readFileSync(backupPath(), "utf8"), text);
+  });
+
+  it("a hook naming another anote by path counts as the anote brief hook", () => {
+    const other = `'/opt/example tools/anote'\\''s/bin/anote.js' brief --graph '${graph}'`;
+    const text = JSON.stringify({ hooks: { SessionStart: [{ hooks: [handler(other)] }] } });
+    writeSettings(text);
+    const r = run(["--write"]);
+    assert.equal(r.code, 1);
+    assert.ok(r.err.includes(`installed: ${other}\n`), r.err);
+    assert.equal(fs.readFileSync(settingsPath(), "utf8"), text);
   });
 
   it("two anote brief entries are refused, even with --force", () => {
