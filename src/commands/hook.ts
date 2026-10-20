@@ -84,6 +84,11 @@ interface Agent {
   defaultFile: () => string;
   /** A last line after the hook is printed or written (stderr with --json); not after "unchanged". */
   notice?: string;
+  /**
+   * Refuse a settings path that is a symlink, before reading it. A cloned repo's hooks file could
+   * link to a credential file, which --write would rewrite and copy into the repo as the backup.
+   */
+  refuseSymlink?: boolean;
 }
 
 // Claude Code adds at most 10,000 characters of hook output to the context.
@@ -105,6 +110,7 @@ const CODEX: Agent = {
   },
   notice:
     "Codex runs this hook only after you trust it: open /hooks in Codex and approve it. Project hooks also need the project's .codex folder to be trusted.",
+  refuseSymlink: true,
 };
 
 export const cmdHookClaude = (a: Args): number => hook(a, CLAUDE);
@@ -142,6 +148,9 @@ function hook(a: Args, agent: Agent): number {
   }
 
   try {
+    if (agent.refuseSymlink && fs.lstatSync(settings, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      return refuse(`${settings} is a symlink; pass the file it points to with --settings. Nothing written to ${settings}.`);
+    }
     const text = readIfExists(settings);
     if (text === undefined) {
       writeAtomic(settings, JSON.stringify(block, null, 2) + "\n", 0o644);

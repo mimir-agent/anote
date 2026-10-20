@@ -203,7 +203,10 @@ keeps the brief whole.
 
 `hook codex` reads and writes only the hooks file it names and its
 `.anote-backup`. It never touches `config.toml`, `auth.json` or anything else
-under `~/.codex`, and never runs codex or brief. If you added an `anote brief`
+under `~/.codex`, and never runs codex or brief. A hooks file that is a symlink
+is refused with nothing written, because a cloned repo's `.codex/hooks.json`
+could link to a file such as `auth.json`; pass the file it points to with
+`--settings`. If you added an `anote brief`
 hook to `config.toml` by hand, remove it, or you get two briefs. The hook
 names anote by its absolute path, as `hook claude` does, so anote does not
 need to be on Codex's PATH; if you move that copy of anote, run

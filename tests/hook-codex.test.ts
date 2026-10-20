@@ -227,6 +227,78 @@ describe("hook codex: --write", () => {
   });
 });
 
+describe("hook codex: a symlinked hooks file is refused (Ward B1)", () => {
+  // A cloned repo whose .codex/hooks.json links somewhere else. Nothing may be read through the
+  // link, written at its target, or backed up. All values are invented.
+  const project = (): string => path.join(tmp, "repo", ".codex", "hooks.json");
+  function link(to: string): void {
+    fs.mkdirSync(path.dirname(project()), { recursive: true });
+    fs.symlinkSync(to, project());
+  }
+  const backups = (): string[] =>
+    fs.readdirSync(tmp, { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith(".anote-backup"));
+  const refusal = (): string =>
+    `anote: ${project()} is a symlink; pass the file it points to with --settings. Nothing written to ${project()}.\n`;
+
+  it("a link to ~/.codex/auth.json: exit 1, auth.json bytes unchanged, no backup anywhere", () => {
+    const auth = path.join(home, ".codex", "auth.json");
+    fs.mkdirSync(path.dirname(auth), { recursive: true });
+    const secret = '{"OPENAI_API_KEY": "sk-invented-not-a-real-key", "tokens": {"access_token": "invented"}}\n';
+    fs.writeFileSync(auth, secret, { mode: 0o600 });
+    link(auth);
+    const before = snapshot(tmp);
+    for (const extra of [[], ["--force"]]) {
+      const r = run(["--write", "--settings", project(), ...extra]);
+      assert.equal(r.code, 1);
+      assert.equal(r.out, "");
+      assert.equal(r.err, WARNING() + refusal());
+      assert.equal(fs.readFileSync(auth, "utf8"), secret);
+      assert.equal(fs.statSync(auth).mode & 0o777, 0o600);
+      assert.deepEqual(backups(), []);
+      assert.deepEqual(snapshot(tmp), before);
+      assert.equal(fs.lstatSync(project()).isSymbolicLink(), true);
+    }
+  });
+
+  it("a link to a valid hooks.json elsewhere: still exit 1, nothing written", () => {
+    const real = path.join(tmp, "elsewhere", "hooks.json");
+    fs.mkdirSync(path.dirname(real), { recursive: true });
+    fs.writeFileSync(real, EXISTING_TEXT);
+    link(real);
+    const before = snapshot(tmp);
+    const r = run(["--write", "--settings", project()]);
+    assert.equal(r.code, 1);
+    assert.equal(r.out, "");
+    assert.equal(r.err, WARNING() + refusal());
+    assert.equal(fs.readFileSync(real, "utf8"), EXISTING_TEXT);
+    assert.deepEqual(backups(), []);
+    assert.deepEqual(snapshot(tmp), before);
+  });
+
+  it("a dangling link is refused too, not followed to create its target", () => {
+    const missing = path.join(tmp, "missing", "hooks.json");
+    link(missing);
+    const r = run(["--write", "--settings", project()]);
+    assert.equal(r.code, 1);
+    assert.equal(r.err, WARNING() + refusal());
+    assert.equal(fs.lstatSync(project()).isSymbolicLink(), true);
+    assert.equal(fs.existsSync(path.dirname(missing)), false);
+  });
+
+  it("--json: refused in the same shape as the other refusals", () => {
+    const real = path.join(tmp, "elsewhere", "hooks.json");
+    fs.mkdirSync(path.dirname(real), { recursive: true });
+    fs.writeFileSync(real, "{}\n");
+    link(real);
+    const r = run(["--write", "--json", "--settings", project()]);
+    assert.equal(r.code, 1);
+    assert.deepEqual(JSON.parse(r.out), { action: "refused", settings: project(), command: command() });
+    assert.ok(r.err.endsWith(refusal()), r.err);
+    assert.equal(fs.readFileSync(real, "utf8"), "{}\n");
+    assert.deepEqual(backups(), []);
+  });
+});
+
 describe("hook codex: usage", () => {
   it("story 8: --budget 199 and 8001 exit 2 and write nothing; 8000 works", () => {
     for (const budget of ["199", "8001"]) {
