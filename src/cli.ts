@@ -14,6 +14,8 @@ import { cmdAppend, cmdConfirm, cmdSet, cmdStale, cmdSupersede } from "./command
 import { cmdList, cmdSearch } from "./commands/find.ts";
 import { cmdLink, cmdNeighbors, cmdUnlink } from "./commands/links.ts";
 import { cmdPublishMark, cmdPublishPreview, cmdPublishUnmark } from "./commands/publish.ts";
+import { REFUSED, cmdPublishSend } from "./commands/send.ts";
+import { CAP } from "./send.ts";
 import { cmdShow } from "./commands/show.ts";
 import { AGENTS, cmdSkillInstall, cmdSkillPath } from "./commands/skill.ts";
 import type { CommandFn } from "./commands/types.ts";
@@ -106,7 +108,7 @@ const COMMANDS: Record<string, Command> = {
 
 // Commands with subcommands. `skill install` and `skill path` never touch the
 // graph. `publish mark` and `publish unmark` write one note; `publish preview`
-// only reads.
+// only reads; `publish send` reads the graph and makes GET requests only.
 const GROUPS: Record<string, Record<string, Command>> = {
   skill: {
     install: { run: cmdSkillInstall, spec: [val("--agent", { choices: AGENTS }), val("--dir"), flag("--force")] },
@@ -116,6 +118,13 @@ const GROUPS: Record<string, Record<string, Command>> = {
     mark: { run: cmdPublishMark, spec: [pos("note")] },
     unmark: { run: cmdPublishUnmark, spec: [pos("note")] },
     preview: { run: cmdPublishPreview, spec: [] },
+    send: {
+      run: cmdPublishSend,
+      spec: [
+        val("--max", { int: true, default: CAP }), flag("--write"),
+        ...REFUSED.map((f) => (f === "--delete" ? flag(f) : val(f))),
+      ],
+    },
   },
 };
 
@@ -125,7 +134,7 @@ function mainUsageError(msg: string): number {
   return 2;
 }
 
-export function main(argv: string[]): number {
+export async function main(argv: string[]): Promise<number> {
   // Only the top-level options and the command word are handled here. Like
   // argparse, unknown options before the command are set aside and reported
   // at the end (as "unrecognized arguments") once the command has parsed.
@@ -169,7 +178,8 @@ export function main(argv: string[]): number {
     const args = parseCommand(`anote ${name}`, HELP[name] as string, MAIN_USAGE, cmd.spec, rest, pre);
     args.command = name;
     const run = cmd.run;
-    return (WRITERS.has(name) ? withGraphLock(graphDir(args.str("graph")), () => run(args)) : run(args)) || 0;
+    const out = WRITERS.has(name) ? withGraphLock(graphDir(args.str("graph")), () => run(args)) : run(args);
+    return (await out) || 0;
   } catch (e) {
     if (e instanceof HelpExit) return 0;
     if (e instanceof UsageError) return 2;

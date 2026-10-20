@@ -22,7 +22,7 @@ interface Issue {
  * Publishing errors (G3 to G10). Only a graph with at least one marked note
  * gets them; a graph with none is checked exactly as before.
  */
-function publishErrors(notes: Notes): Array<[string, string]> {
+export function publishErrors(notes: Notes): Array<[string, string]> {
   const marked = [...notes].filter(([, n]) => isMarked(n));
   if (marked.length === 0) return [];
   const out: Array<[string, string]> = [];
