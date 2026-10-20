@@ -16,6 +16,7 @@ New to the tool? Run `anote --help` and `anote types`. The graph lives in
 
 At the start of a session, run `anote brief --budget N` (N in characters,
 roughly 4 per token) to see the notes due for review and the newest log lines.
+If a brief was already printed at session start, read it before running brief again.
 
 ## The rule that matters most: log first
 
